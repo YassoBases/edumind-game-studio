@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<!--
+  EduMind Template: match_pairs
+  Pedagogical mechanic: match left items to right items (vocab↔definition,
+  equation↔solution, term↔example). Tap left, then tap matching right.
+  Reference implementation. Content shown is a placeholder example.
+-->
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;touch-action:none;}
+html,body{width:100%;height:100%;overflow:hidden;background:#0b1020;}
+#game-container{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;}
+canvas{display:block;}
+</style>
+</head>
+<body>
+<div id="game-container"></div>
+<script src="https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.min.js"></script>
+<script src="/client/EduCore.js"></script>
+<script>
+window.EduMindAPI = window.EduMindAPI || {
+  reportScore: () => {}, reportLevel: () => {}, reportSummary: () => {},
+  reportComplete: () => {}, reportEvent: () => {},
+};
+window.EduCore.setLanguage('en');
+
+const SPEC = {
+  templateId: 'match_pairs',
+  language: 'en',
+  subject: 'Biology',
+  topic: 'Cell organelles',
+  theme: 'lab',
+  orientation: 'portrait',
+  concepts: [
+    { id: 'organelle_function', label: 'Organelle functions', description: 'What each organelle does' },
+    { id: 'organelle_location', label: 'Organelle locations', description: 'Where organelles live' },
+  ],
+  levels: Array.from({ length: 5 }, (_, i) => ({
+    index: i + 1,
+    name: 'Level ' + (i + 1),
+    timeLimitSeconds: 90 - i * 10,
+    hintsAvailable: Math.max(1, 3 - Math.floor(i / 2)),
+    contentItems: [
+      { id: 'p' + i + 'a', prompt: 'Mitochondrion', answer: 'Powerhouse of the cell', concepts: ['organelle_function'], difficulty: 0.1 + i * 0.15, explanationOnWrong: 'Mitochondria produce ATP, the cell\'s energy currency.' },
+      { id: 'p' + i + 'b', prompt: 'Ribosome', answer: 'Builds proteins', concepts: ['organelle_function'], difficulty: 0.2 + i * 0.15, explanationOnWrong: 'Ribosomes translate mRNA into protein.' },
+      { id: 'p' + i + 'c', prompt: 'Nucleus', answer: 'Stores DNA', concepts: ['organelle_function','organelle_location'], difficulty: 0.15 + i * 0.15, explanationOnWrong: 'The nucleus houses the cell\'s genetic material.' },
+    ],
+    passingScore: 0.6,
+  })),
+  feedback: {
+    correctPool: ['Nice match!', 'Exactly!', 'Great recall'],
+    wrongPool: ['Not quite', 'Try again', 'Close — re-read it'],
+    levelComplete: ['Level cleared', 'On to the next one'],
+  },
+  visualStyle: { palette: ['#0b1020','#1f2937','#4ade80','#fbbf24'], accent: '#4ade80' },
+  audioCues: ['correct','wrong','levelUp','win','lose'],
+};
+
+const engine = window.EduCore.AdaptiveEngine.create(SPEC);
+const W = 720, H = 1280;
+
+const MenuScene = window.EduCore.buildMenuScene(SPEC);
+
+class GameScene extends Phaser.Scene {
+  constructor() { super('GameScene'); }
+  create() {
+    this.score = window.EduCore.makeScoreHud(this, 24, 24);
+    this.timer = window.EduCore.makeTimerHud(this, W - 24, 24, SPEC.levels[0].timeLimitSeconds, () => this.endLevel());
+    this.levelHud = window.EduCore.makeLevelHud(this, W / 2, 24, 1, 5);
+    this.hearts = window.EduCore.makeHeartsHud(this, 60, 80, 3);
+    this.startLevel(1);
+  }
+  startLevel(levelIdx) {
+    if (this.layer) this.layer.destroy(true);
+    this.layer = this.add.container(0, 0);
+    const lvl = SPEC.levels[levelIdx - 1];
+    this.currentLevel = levelIdx;
+    this.levelHud.set(levelIdx, 5);
+    this.timer.reset(lvl.timeLimitSeconds);
+    this.timer.start();
+    this.attempts = 0; this.correct = 0; this.hintsUsed = 0;
+    this.levelStart = this.scene.systems.time.now;
+    this.items = lvl.contentItems.slice();
+    this.correctIds = [];
+    this.selectedLeft = null;
+
+    const lefts = this.items.map(i => ({ id: i.id, text: i.prompt }));
+    const rights = this.items.map(i => ({ id: i.id, text: i.answer }));
+    Phaser.Utils.Array.Shuffle(rights);
+
+    const colX = [W * 0.27, W * 0.73];
+    const rowY0 = 220, rowH = 180;
+    this.buttons = [];
+
+    lefts.forEach((l, i) => this.addButton(colX[0], rowY0 + rowH * i, l.text, l.id, 'left'));
+    rights.forEach((r, i) => this.addButton(colX[1], rowY0 + rowH * i, r.text, r.id, 'right'));
+
+    if (lvl.hintsAvailable > 0) {
+      const hintBtn = this.add.rectangle(W / 2, H - 80, 280, 70, 0x4338ca).setInteractive({ useHandCursor: true });
+      window.EduCore.addText(this, W / 2, H - 80, window.EduCore.t('hint') + ' (' + lvl.hintsAvailable + ')', { size: '24px', color: '#ffffff', origin: [0.5, 0.5] });
+      hintBtn.on('pointerup', () => this.useHint(lvl, hintBtn));
+      this.hintBtn = hintBtn;
+    }
+  }
+  addButton(x, y, text, id, side) {
+    const w = 280, h = 140;
+    const rect = this.add.rectangle(x, y, w, h, 0x1f2937, 0.95).setInteractive({ useHandCursor: true });
+    const label = window.EduCore.addText(this, x, y, text, { size: '22px', color: '#ffffff', origin: [0.5, 0.5], wordWrap: { width: w - 20 } });
+    rect.on('pointerup', () => this.tap(rect, label, id, side));
+    this.buttons.push({ rect, label, id, side, active: true });
+  }
+  tap(rect, label, id, side) {
+    if (!this.buttons.find(b => b.rect === rect)?.active) return;
+    if (side === 'left') {
+      if (this.selectedLeft) this.selectedLeft.rect.setFillStyle(0x1f2937);
+      this.selectedLeft = { rect, label, id };
+      rect.setFillStyle(0x4338ca);
+      return;
+    }
+    if (!this.selectedLeft) return;
+    this.attempts += 1;
+    const matched = this.selectedLeft.id === id;
+    if (matched) {
+      this.correct += 1;
+      this.correctIds.push(id);
+      this.score.add(10);
+      window.EduCore.showCorrect(this, W / 2, H / 2 - 200, 10);
+      [this.selectedLeft.rect, rect].forEach(r => r.setFillStyle(0x065f46));
+      this.buttons.find(b => b.rect === this.selectedLeft.rect).active = false;
+      this.buttons.find(b => b.rect === rect).active = false;
+    } else {
+      this.hearts.lose();
+      const item = SPEC.levels[this.currentLevel - 1].contentItems.find(i => i.id === id) || SPEC.levels[this.currentLevel - 1].contentItems.find(i => i.id === this.selectedLeft.id);
+      window.EduCore.showWrong(this, W / 2, H / 2 - 200, item ? item.explanationOnWrong : '');
+      this.selectedLeft.rect.setFillStyle(0x1f2937);
+      rect.setFillStyle(0x7f1d1d);
+      this.time.delayedCall(400, () => rect.setFillStyle(0x1f2937));
+    }
+    this.selectedLeft = null;
+    if (this.buttons.filter(b => b.side === 'left' && b.active).length === 0) this.endLevel();
+  }
+  useHint(lvl, hintBtn) {
+    if (this.hintsUsed >= lvl.hintsAvailable || !this.selectedLeft) return;
+    this.hintsUsed += 1;
+    const matchId = this.selectedLeft.id;
+    const right = this.buttons.find(b => b.side === 'right' && b.id === matchId && b.active);
+    if (right) {
+      right.rect.setStrokeStyle(4, 0xfbbf24);
+      this.time.delayedCall(900, () => right.rect.setStrokeStyle());
+    }
+    if (this.hintsUsed >= lvl.hintsAvailable) hintBtn.setFillStyle(0x4b5563);
+  }
+  endLevel() {
+    this.timer.stop();
+    const lvl = SPEC.levels[this.currentLevel - 1];
+    const timeUsedMs = (lvl.timeLimitSeconds - this.timer.remaining()) * 1000;
+    const res = engine.completeLevel({
+      correct: this.correct,
+      attempts: this.attempts,
+      timeUsedMs,
+      timeLimitMs: lvl.timeLimitSeconds * 1000,
+      hintsUsed: this.hintsUsed,
+      maxHints: lvl.hintsAvailable,
+      attemptedItems: lvl.contentItems,
+      correctItems: this.correctIds,
+    });
+    window.EduMindAPI.reportLevel(this.currentLevel, res.score, res.accuracy, res.durationMs);
+    window.EduCore.cues.levelUp();
+    if (res.stopReason || res.nextLevel === this.currentLevel && this.correct === 0) {
+      this.finish();
+    } else {
+      this.time.delayedCall(700, () => this.startLevel(res.nextLevel));
+    }
+  }
+  finish() {
+    const summary = engine.buildSummary();
+    window.EduMindAPI.reportSummary(summary);
+    window.EduMindAPI.reportComplete(summary.totalScore, summary.masteryAchieved, summary.durationSeconds);
+    this.scene.start('EndScene', { summary });
+  }
+}
+
+class EndScene extends (window.EduCore.buildEndScene(
+  () => engine.buildSummary(),
+  () => location.reload(),
+  () => window.EduMindAPI.reportEvent('exit', {})
+)) {}
+
+new Phaser.Game({
+  type: Phaser.AUTO,
+  parent: 'game-container',
+  width: W,
+  height: H,
+  backgroundColor: '#0b1020',
+  scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+  scene: [MenuScene, GameScene, EndScene],
+});
+</script>
+</body>
+</html>

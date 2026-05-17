@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<!-- EduMind Template: target_practice — tap the correct answer among 4 stationary targets.
+     Difficulty scales by content depth (harder questions), NOT by reflex speed. -->
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>*{margin:0;padding:0;box-sizing:border-box;touch-action:none;}html,body{width:100%;height:100%;overflow:hidden;background:#0b1020;}#game-container{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;}canvas{display:block;}</style>
+</head>
+<body>
+<div id="game-container"></div>
+<script src="https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.min.js"></script>
+<script src="/client/EduCore.js"></script>
+<script>
+window.EduMindAPI = window.EduMindAPI || { reportScore:()=>{}, reportLevel:()=>{}, reportSummary:()=>{}, reportComplete:()=>{}, reportEvent:()=>{} };
+window.EduCore.setLanguage('en');
+
+const SPEC = {
+  templateId: 'target_practice', language: 'en', subject: 'Geography', topic: 'World capitals', theme: 'globe', orientation: 'portrait',
+  concepts: [
+    { id: 'capitals_europe', label: 'European capitals', description: 'Capital cities of Europe' },
+    { id: 'capitals_asia', label: 'Asian capitals', description: 'Capital cities of Asia' },
+  ],
+  levels: Array.from({ length: 5 }, (_, i) => ({
+    index: i + 1, name: 'Level ' + (i + 1), timeLimitSeconds: 90 - i * 10, hintsAvailable: Math.max(1, 3 - Math.floor(i / 2)),
+    contentItems: [
+      { id: 't' + i + 'a', prompt: 'Capital of France', answer: 'Paris', distractors: ['Lyon','Marseille','Nice'], concepts: ['capitals_europe'], difficulty: 0.1 + i * 0.15, explanationOnWrong: 'Paris is the capital of France.' },
+      { id: 't' + i + 'b', prompt: 'Capital of Japan', answer: 'Tokyo', distractors: ['Osaka','Kyoto','Sapporo'], concepts: ['capitals_asia'], difficulty: 0.15 + i * 0.15, explanationOnWrong: 'Tokyo has been Japan\'s capital since 1868.' },
+      { id: 't' + i + 'c', prompt: 'Capital of Egypt', answer: 'Cairo', distractors: ['Alexandria','Giza','Luxor'], concepts: ['capitals_europe','capitals_asia'], difficulty: 0.2 + i * 0.15, explanationOnWrong: 'Cairo is Egypt\'s capital.' },
+    ],
+    passingScore: 0.6,
+  })),
+  feedback: { correctPool:['Bullseye!','Right!','Nailed it'], wrongPool:['Missed','Off-target','Re-aim'], levelComplete:['Round won','Next round'] },
+  visualStyle: { palette:['#0b1020','#1f2937','#4ade80','#fbbf24'], accent:'#4ade80' },
+  audioCues: ['correct','wrong','levelUp','win','lose'],
+};
+
+const engine = window.EduCore.AdaptiveEngine.create(SPEC);
+const W = 720, H = 1280;
+const MenuScene = window.EduCore.buildMenuScene(SPEC);
+
+class GameScene extends Phaser.Scene {
+  constructor() { super('GameScene'); }
+  create() {
+    this.score = window.EduCore.makeScoreHud(this, 24, 24);
+    this.timer = window.EduCore.makeTimerHud(this, W - 24, 24, SPEC.levels[0].timeLimitSeconds, () => this.endLevel());
+    this.levelHud = window.EduCore.makeLevelHud(this, W / 2, 24, 1, 5);
+    this.hearts = window.EduCore.makeHeartsHud(this, 60, 80, 3);
+    this.startLevel(1);
+  }
+  startLevel(idx) {
+    if (this.layer) this.layer.destroy(true);
+    this.layer = this.add.container(0, 0);
+    const lvl = SPEC.levels[idx - 1];
+    this.currentLevel = idx;
+    this.levelHud.set(idx, 5);
+    this.timer.reset(lvl.timeLimitSeconds); this.timer.start();
+    this.attempts = 0; this.correct = 0; this.hintsUsed = 0; this.correctIds = [];
+    this.queue = lvl.contentItems.slice();
+    this.nextQuestion();
+  }
+  nextQuestion() {
+    if (this.queueLayer) this.queueLayer.destroy(true);
+    this.queueLayer = this.add.container(0, 0);
+    if (this.queue.length === 0) { this.endLevel(); return; }
+    const it = this.queue.shift();
+    this.currentItem = it;
+    window.EduCore.addText(this, W / 2, 220, it.prompt, { size: '28px', color: '#ffffff', origin: [0.5, 0.5], wordWrap: { width: W - 80 } });
+    const opts = Phaser.Utils.Array.Shuffle([it.answer, ...(it.distractors || []).slice(0, 3)]);
+    const cols = 2, rowH = 180, colW = 320;
+    opts.forEach((opt, i) => {
+      const r = Math.floor(i / cols), c = i % cols;
+      const x = W / 2 + (c - 0.5) * colW;
+      const y = 420 + r * rowH;
+      const target = this.add.circle(x, y, 110, 0x4338ca).setInteractive({ useHandCursor: true });
+      window.EduCore.addText(this, x, y, opt, { size: '22px', color: '#ffffff', origin: [0.5, 0.5], wordWrap: { width: 180 } });
+      target.on('pointerup', () => this.handleTap(opt, target));
+    });
+  }
+  handleTap(opt, target) {
+    this.attempts += 1;
+    if (opt === this.currentItem.answer) {
+      this.correct += 1; this.correctIds.push(this.currentItem.id); this.score.add(10);
+      window.EduCore.showCorrect(this, W / 2, 380, 10);
+      target.setFillStyle(0x065f46);
+    } else {
+      this.hearts.lose();
+      window.EduCore.showWrong(this, W / 2, 380, this.currentItem.explanationOnWrong);
+      target.setFillStyle(0x7f1d1d);
+    }
+    this.time.delayedCall(800, () => this.nextQuestion());
+  }
+  endLevel() {
+    this.timer.stop();
+    const lvl = SPEC.levels[this.currentLevel - 1];
+    const timeUsedMs = (lvl.timeLimitSeconds - this.timer.remaining()) * 1000;
+    const res = engine.completeLevel({ correct: this.correct, attempts: this.attempts, timeUsedMs, timeLimitMs: lvl.timeLimitSeconds * 1000, hintsUsed: this.hintsUsed, maxHints: lvl.hintsAvailable, attemptedItems: lvl.contentItems, correctItems: this.correctIds });
+    window.EduMindAPI.reportLevel(this.currentLevel, res.score, res.accuracy, res.durationMs);
+    window.EduCore.cues.levelUp();
+    if (res.stopReason) this.finish(); else this.time.delayedCall(700, () => this.startLevel(res.nextLevel));
+  }
+  finish() {
+    const summary = engine.buildSummary();
+    window.EduMindAPI.reportSummary(summary);
+    window.EduMindAPI.reportComplete(summary.totalScore, summary.masteryAchieved, summary.durationSeconds);
+    this.scene.start('EndScene');
+  }
+}
+class EndScene extends (window.EduCore.buildEndScene(() => engine.buildSummary(), () => location.reload(), () => window.EduMindAPI.reportEvent('exit', {}))) {}
+
+new Phaser.Game({ type: Phaser.AUTO, parent: 'game-container', width: W, height: H, backgroundColor: '#0b1020', scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH }, scene: [MenuScene, GameScene, EndScene] });
+</script>
+</body>
+</html>

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<!-- EduMind Template: quiz_quest — multi-step problems. Each "quest" walks the student
+     through a chained problem; each step is a small MCQ. -->
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>*{margin:0;padding:0;box-sizing:border-box;touch-action:none;}html,body{width:100%;height:100%;overflow:hidden;background:#0b1020;}#game-container{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;}canvas{display:block;}</style>
+</head>
+<body>
+<div id="game-container"></div>
+<script src="https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.min.js"></script>
+<script src="/client/EduCore.js"></script>
+<script>
+window.EduMindAPI = window.EduMindAPI || { reportScore:()=>{}, reportLevel:()=>{}, reportSummary:()=>{}, reportComplete:()=>{}, reportEvent:()=>{} };
+window.EduCore.setLanguage('en');
+
+const SPEC = {
+  templateId: 'quiz_quest', language: 'en', subject: 'Math', topic: 'Linear equations', theme: 'quest', orientation: 'portrait',
+  concepts: [
+    { id: 'isolate_var', label: 'Isolating the variable', description: 'Move terms across the equals sign' },
+    { id: 'check_answer', label: 'Checking an answer', description: 'Substitute back to verify' },
+  ],
+  levels: Array.from({ length: 5 }, (_, i) => ({
+    index: i + 1, name: 'Level ' + (i + 1), timeLimitSeconds: 120 - i * 10, hintsAvailable: Math.max(1, 3 - Math.floor(i / 2)),
+    contentItems: [
+      { id: 'qq' + i + 'a', prompt: 'Solve: 2x + 4 = 10. Step 1 — subtract 4 from both sides. Result?', answer: '2x = 6', distractors: ['2x = 14','x = 6','x = 10'], concepts: ['isolate_var'], difficulty: 0.2 + i * 0.13, explanationOnWrong: 'Subtract 4 from both sides: 2x + 4 - 4 = 10 - 4 → 2x = 6.' },
+      { id: 'qq' + i + 'b', prompt: 'Now divide both sides by 2. Final answer?', answer: 'x = 3', distractors: ['x = 6','x = 2','x = 12'], concepts: ['isolate_var'], difficulty: 0.25 + i * 0.13, explanationOnWrong: '2x = 6 → x = 6 ÷ 2 = 3.' },
+      { id: 'qq' + i + 'c', prompt: 'Check: substitute x = 3 into 2x + 4. Result?', answer: '10', distractors: ['8','12','6'], concepts: ['check_answer'], difficulty: 0.3 + i * 0.13, explanationOnWrong: '2(3) + 4 = 6 + 4 = 10, which matches.' },
+    ],
+    passingScore: 0.6,
+  })),
+  feedback: { correctPool:['Right step','Yes!','Onward'], wrongPool:['Re-do step','Off','Check again'], levelComplete:['Quest cleared','New quest'] },
+  visualStyle: { palette:['#0b1020','#1f2937','#4ade80','#fbbf24'], accent:'#4ade80' },
+  audioCues: ['correct','wrong','levelUp','win','lose'],
+};
+
+const engine = window.EduCore.AdaptiveEngine.create(SPEC);
+const W = 720, H = 1280;
+const MenuScene = window.EduCore.buildMenuScene(SPEC);
+
+class GameScene extends Phaser.Scene {
+  constructor() { super('GameScene'); }
+  create() {
+    this.score = window.EduCore.makeScoreHud(this, 24, 24);
+    this.timer = window.EduCore.makeTimerHud(this, W - 24, 24, SPEC.levels[0].timeLimitSeconds, () => this.endLevel());
+    this.levelHud = window.EduCore.makeLevelHud(this, W / 2, 24, 1, 5);
+    this.hearts = window.EduCore.makeHeartsHud(this, 60, 80, 3);
+    this.progress = window.EduCore.makeProgressBar(this, 80, 130, W - 160, 18);
+    this.startLevel(1);
+  }
+  startLevel(idx) {
+    if (this.layer) this.layer.destroy(true);
+    this.layer = this.add.container(0, 0);
+    const lvl = SPEC.levels[idx - 1];
+    this.currentLevel = idx;
+    this.levelHud.set(idx, 5);
+    this.timer.reset(lvl.timeLimitSeconds); this.timer.start();
+    this.attempts = 0; this.correct = 0; this.hintsUsed = 0; this.correctIds = [];
+    this.queue = lvl.contentItems.slice();
+    this.totalSteps = this.queue.length;
+    this.nextStep();
+  }
+  nextStep() {
+    if (this.qLayer) this.qLayer.destroy(true);
+    this.qLayer = this.add.container(0, 0);
+    if (this.queue.length === 0) { this.endLevel(); return; }
+    const it = this.queue.shift();
+    this.currentItem = it;
+    this.progress.set((this.totalSteps - this.queue.length - 1) / this.totalSteps);
+    window.EduCore.addText(this, W / 2, 240, it.prompt, { size: '24px', origin: [0.5, 0.5], wordWrap: { width: W - 80 }, color: '#ffffff' });
+    const opts = Phaser.Utils.Array.Shuffle([it.answer, ...(it.distractors || []).slice(0, 3)]);
+    opts.forEach((opt, i) => {
+      const y = 500 + i * 130;
+      const rect = this.add.rectangle(W / 2, y, W - 120, 110, 0x1f2937).setInteractive({ useHandCursor: true }).setStrokeStyle(2, 0x4338ca);
+      window.EduCore.addText(this, W / 2, y, opt, { size: '22px', color: '#ffffff', origin: [0.5, 0.5], wordWrap: { width: W - 160 } });
+      rect.on('pointerup', () => this.tap(opt, rect));
+    });
+  }
+  tap(opt, rect) {
+    this.attempts += 1;
+    if (opt === this.currentItem.answer) {
+      this.correct += 1; this.correctIds.push(this.currentItem.id); this.score.add(10);
+      rect.setFillStyle(0x065f46);
+      window.EduCore.showCorrect(this, W / 2, 420, 10);
+    } else {
+      this.hearts.lose();
+      rect.setFillStyle(0x7f1d1d);
+      window.EduCore.showWrong(this, W / 2, 420, this.currentItem.explanationOnWrong);
+    }
+    this.time.delayedCall(900, () => this.nextStep());
+  }
+  endLevel() {
+    this.timer.stop();
+    const lvl = SPEC.levels[this.currentLevel - 1];
+    const timeUsedMs = (lvl.timeLimitSeconds - this.timer.remaining()) * 1000;
+    const res = engine.completeLevel({ correct: this.correct, attempts: this.attempts, timeUsedMs, timeLimitMs: lvl.timeLimitSeconds * 1000, hintsUsed: this.hintsUsed, maxHints: lvl.hintsAvailable, attemptedItems: lvl.contentItems, correctItems: this.correctIds });
+    window.EduMindAPI.reportLevel(this.currentLevel, res.score, res.accuracy, res.durationMs);
+    window.EduCore.cues.levelUp();
+    if (res.stopReason) this.finish(); else this.time.delayedCall(700, () => this.startLevel(res.nextLevel));
+  }
+  finish() {
+    const summary = engine.buildSummary();
+    window.EduMindAPI.reportSummary(summary);
+    window.EduMindAPI.reportComplete(summary.totalScore, summary.masteryAchieved, summary.durationSeconds);
+    this.scene.start('EndScene');
+  }
+}
+class EndScene extends (window.EduCore.buildEndScene(() => engine.buildSummary(), () => location.reload(), () => window.EduMindAPI.reportEvent('exit', {}))) {}
+
+new Phaser.Game({ type: Phaser.AUTO, parent: 'game-container', width: W, height: H, backgroundColor: '#0b1020', scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH }, scene: [MenuScene, GameScene, EndScene] });
+</script>
+</body>
+</html>

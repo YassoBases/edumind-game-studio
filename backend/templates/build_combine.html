@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<!-- EduMind Template: build_combine — drag ingredient cards onto a build area to assemble
+     a target compound/structure/sentence. Multi-part composition. -->
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>*{margin:0;padding:0;box-sizing:border-box;touch-action:none;}html,body{width:100%;height:100%;overflow:hidden;background:#0b1020;}#game-container{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;}canvas{display:block;}</style>
+</head>
+<body>
+<div id="game-container"></div>
+<script src="https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.min.js"></script>
+<script src="/client/EduCore.js"></script>
+<script>
+window.EduMindAPI = window.EduMindAPI || { reportScore:()=>{}, reportLevel:()=>{}, reportSummary:()=>{}, reportComplete:()=>{}, reportEvent:()=>{} };
+window.EduCore.setLanguage('en');
+
+const SPEC = {
+  templateId: 'build_combine', language: 'en', subject: 'Chemistry', topic: 'Balancing simple molecules', theme: 'lab', orientation: 'portrait',
+  concepts: [
+    { id: 'molecule_formula', label: 'Chemical formulas', description: 'Counting atoms in a molecule' },
+    { id: 'molecule_naming', label: 'Naming molecules', description: 'Common molecule names' },
+  ],
+  levels: Array.from({ length: 5 }, (_, i) => ({
+    index: i + 1, name: 'Level ' + (i + 1), timeLimitSeconds: 110 - i * 10, hintsAvailable: Math.max(1, 3 - Math.floor(i / 2)),
+    contentItems: [
+      { id: 'b' + i + 'a', prompt: 'Build water (H2O)', answer: ['H','H','O'], distractors: ['C','N','He'], concepts: ['molecule_formula','molecule_naming'], difficulty: 0.2 + i * 0.12, explanationOnWrong: 'Water is 2 hydrogen + 1 oxygen.' },
+      { id: 'b' + i + 'b', prompt: 'Build carbon dioxide (CO2)', answer: ['C','O','O'], distractors: ['H','N','S'], concepts: ['molecule_formula'], difficulty: 0.3 + i * 0.12, explanationOnWrong: 'CO2: 1 carbon + 2 oxygens.' },
+      { id: 'b' + i + 'c', prompt: 'Build methane (CH4)', answer: ['C','H','H','H','H'], distractors: ['O','N'], concepts: ['molecule_formula','molecule_naming'], difficulty: 0.4 + i * 0.12, explanationOnWrong: 'Methane: 1 carbon + 4 hydrogens.' },
+    ],
+    passingScore: 0.6,
+  })),
+  feedback: { correctPool:['Built!','Synthesised','Perfect formula'], wrongPool:['Recount','Off','Wrong mix'], levelComplete:['Mixture done','Next compound'] },
+  visualStyle: { palette:['#0b1020','#1f2937','#4ade80','#fbbf24'], accent:'#4ade80' },
+  audioCues: ['correct','wrong','levelUp','win','lose'],
+};
+
+const engine = window.EduCore.AdaptiveEngine.create(SPEC);
+const W = 720, H = 1280;
+const MenuScene = window.EduCore.buildMenuScene(SPEC);
+
+function multisetEqual(a, b) {
+  if (a.length !== b.length) return false;
+  const A = a.slice().sort(); const B = b.slice().sort();
+  return A.every((v, i) => v === B[i]);
+}
+
+class GameScene extends Phaser.Scene {
+  constructor() { super('GameScene'); }
+  create() {
+    this.score = window.EduCore.makeScoreHud(this, 24, 24);
+    this.timer = window.EduCore.makeTimerHud(this, W - 24, 24, SPEC.levels[0].timeLimitSeconds, () => this.endLevel());
+    this.levelHud = window.EduCore.makeLevelHud(this, W / 2, 24, 1, 5);
+    this.hearts = window.EduCore.makeHeartsHud(this, 60, 80, 3);
+    this.startLevel(1);
+  }
+  startLevel(idx) {
+    if (this.layer) this.layer.destroy(true);
+    this.layer = this.add.container(0, 0);
+    const lvl = SPEC.levels[idx - 1];
+    this.currentLevel = idx;
+    this.levelHud.set(idx, 5);
+    this.timer.reset(lvl.timeLimitSeconds); this.timer.start();
+    this.attempts = 0; this.correct = 0; this.hintsUsed = 0; this.correctIds = [];
+    this.queue = lvl.contentItems.slice();
+    this.nextItem();
+  }
+  nextItem() {
+    if (this.qLayer) this.qLayer.destroy(true);
+    this.qLayer = this.add.container(0, 0);
+    if (this.queue.length === 0) { this.endLevel(); return; }
+    const it = this.queue.shift();
+    this.currentItem = it;
+    this.placed = [];
+    window.EduCore.addText(this, W / 2, 200, it.prompt, { size: '26px', origin: [0.5, 0.5], wordWrap: { width: W - 80 } });
+    const slotArea = this.add.rectangle(W / 2, 380, W - 100, 160, 0x1f2937).setStrokeStyle(2, 0x4ade80);
+    this.placedLabel = window.EduCore.addText(this, W / 2, 380, '', { size: '32px', origin: [0.5, 0.5] });
+
+    const pool = Phaser.Utils.Array.Shuffle([...(it.answer || []), ...(it.distractors || [])]);
+    pool.forEach((sym, i) => {
+      const x = 90 + (i % 4) * 160;
+      const y = 600 + Math.floor(i / 4) * 140;
+      const rect = this.add.circle(x, y, 60, 0x4338ca).setInteractive({ useHandCursor: true });
+      window.EduCore.addText(this, x, y, sym, { size: '28px', color: '#ffffff', origin: [0.5, 0.5] });
+      rect.on('pointerup', () => {
+        this.placed.push(sym);
+        this.placedLabel.setText(this.placed.join(' + '));
+        rect.setFillStyle(0x065f46);
+        rect.disableInteractive();
+      });
+    });
+    const confirm = this.add.rectangle(W / 2 - 140, H - 180, 240, 90, 0x4ade80).setInteractive({ useHandCursor: true });
+    window.EduCore.addText(this, W / 2 - 140, H - 180, window.EduCore.t('next'), { size: '24px', color: '#0a0a0a', origin: [0.5, 0.5] });
+    confirm.on('pointerup', () => this.check());
+    const reset = this.add.rectangle(W / 2 + 140, H - 180, 240, 90, 0x374151).setInteractive({ useHandCursor: true });
+    window.EduCore.addText(this, W / 2 + 140, H - 180, window.EduCore.t('retry'), { size: '24px', color: '#ffffff', origin: [0.5, 0.5] });
+    reset.on('pointerup', () => this.nextItem());
+  }
+  check() {
+    this.attempts += 1;
+    const ok = multisetEqual(this.placed, this.currentItem.answer);
+    if (ok) {
+      this.correct += 1; this.correctIds.push(this.currentItem.id); this.score.add(10);
+      window.EduCore.showCorrect(this, W / 2, 480, 10);
+    } else {
+      this.hearts.lose();
+      window.EduCore.showWrong(this, W / 2, 480, this.currentItem.explanationOnWrong);
+    }
+    this.time.delayedCall(900, () => this.nextItem());
+  }
+  endLevel() {
+    this.timer.stop();
+    const lvl = SPEC.levels[this.currentLevel - 1];
+    const timeUsedMs = (lvl.timeLimitSeconds - this.timer.remaining()) * 1000;
+    const res = engine.completeLevel({ correct: this.correct, attempts: this.attempts, timeUsedMs, timeLimitMs: lvl.timeLimitSeconds * 1000, hintsUsed: this.hintsUsed, maxHints: lvl.hintsAvailable, attemptedItems: lvl.contentItems, correctItems: this.correctIds });
+    window.EduMindAPI.reportLevel(this.currentLevel, res.score, res.accuracy, res.durationMs);
+    window.EduCore.cues.levelUp();
+    if (res.stopReason) this.finish(); else this.time.delayedCall(700, () => this.startLevel(res.nextLevel));
+  }
+  finish() {
+    const summary = engine.buildSummary();
+    window.EduMindAPI.reportSummary(summary);
+    window.EduMindAPI.reportComplete(summary.totalScore, summary.masteryAchieved, summary.durationSeconds);
+    this.scene.start('EndScene');
+  }
+}
+class EndScene extends (window.EduCore.buildEndScene(() => engine.buildSummary(), () => location.reload(), () => window.EduMindAPI.reportEvent('exit', {}))) {}
+
+new Phaser.Game({ type: Phaser.AUTO, parent: 'game-container', width: W, height: H, backgroundColor: '#0b1020', scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH }, scene: [MenuScene, GameScene, EndScene] });
+</script>
+</body>
+</html>

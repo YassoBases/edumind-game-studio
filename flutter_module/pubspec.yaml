@@ -1,0 +1,24 @@
+name: edumind_game_studio
+description: EduMind AI Game Studio — feature module.
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.19.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  webview_flutter: ^4.7.0
+  http: ^1.2.0
+  intl: ^0.19.0
+  flutter_animate: ^4.5.0
+  google_fonts: ^6.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

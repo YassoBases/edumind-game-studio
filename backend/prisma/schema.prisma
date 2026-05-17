@@ -1,0 +1,124 @@
+// EduMind AI Game Studio — Prisma schema (Postgres 16)
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Student {
+  id           String   @id @default(cuid())
+  externalId   String   @unique
+  language     String   @default("en")
+  createdAt    DateTime @default(now())
+  games        Game[]
+  levels       LevelRecord[]
+  summaries    Summary[]
+  conceptMastery ConceptMastery[]
+}
+
+model Game {
+  id             String     @id @default(cuid())
+  studentId      String
+  student        Student    @relation(fields: [studentId], references: [id])
+  templateId     String
+  archetype      String?
+  themeId        String?
+  language       String
+  orientation    String
+  subject        String
+  topic          String
+  spec           Json
+  html           String
+  model          String
+  inputTokens    Int        @default(0)
+  outputTokens   Int        @default(0)
+  cacheReadTokens Int       @default(0)
+  cacheWriteTokens Int      @default(0)
+  imageCostUsdMillicents Int @default(0)
+  createdAt      DateTime   @default(now())
+  levels         LevelRecord[]
+  summary        Summary?
+
+  @@index([studentId, createdAt])
+  @@index([archetype, themeId])
+}
+
+model SpriteCache {
+  cacheKey   String   @id
+  archetype  String
+  themeId    String
+  conceptId  String?
+  role       String
+  base64Data String
+  promptUsed String
+  byteSize   Int
+  hitCount   Int      @default(0)
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  @@index([archetype, themeId])
+}
+
+model LevelRecord {
+  id           String   @id @default(cuid())
+  gameId       String
+  game         Game     @relation(fields: [gameId], references: [id])
+  studentId    String
+  student      Student  @relation(fields: [studentId], references: [id])
+  levelIndex   Int
+  score        Float
+  accuracy     Float
+  durationMs   Int
+  createdAt    DateTime @default(now())
+
+  @@index([gameId, levelIndex])
+}
+
+model Summary {
+  id                    String   @id @default(cuid())
+  gameId                String   @unique
+  game                  Game     @relation(fields: [gameId], references: [id])
+  studentId             String
+  student               Student  @relation(fields: [studentId], references: [id])
+  payload               Json
+  enrichment            Json?
+  enrichmentReady       Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  enrichedAt            DateTime?
+}
+
+model ConceptMastery {
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id])
+  conceptId   String
+  attempts    Int      @default(0)
+  correct     Int      @default(0)
+  lastSeen    DateTime @default(now())
+
+  @@id([studentId, conceptId])
+}
+
+model RepairProtocolEntry {
+  signature      String   @id
+  occurrences    Int      @default(1)
+  lastSeen       DateTime @default(now())
+  rootCause      String
+  fixTemplate    String
+  autoPatch      Json?
+  verified       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+}
+
+model PromptVersion {
+  id        String   @id @default(cuid())
+  name      String
+  version   Int
+  body      String
+  createdAt DateTime @default(now())
+
+  @@unique([name, version])
+}

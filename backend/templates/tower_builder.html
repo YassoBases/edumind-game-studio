@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<!--
+  EduMind Archetype: tower_builder
+  Pedagogical mechanic: build_combine.
+  Presentation: a tower being built from stacked blocks. Each level presents a target compound /
+  formula / composition; player drags correct ingredient blocks onto the base, wrong blocks
+  appear cracked and crumble. Build to target height = level complete.
+-->
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>*{margin:0;padding:0;box-sizing:border-box;touch-action:none;}html,body{width:100%;height:100%;overflow:hidden;background:#0b1020;}#game-container{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;}canvas{display:block;}</style>
+</head>
+<body>
+<div id="game-container"></div>
+<script src="https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.min.js"></script>
+<script src="/client/EduCore.js"></script>
+<script>
+window.EduSprites = window.EduSprites || { library: {}, generated: {} };
+window.EduMindAPI = window.EduMindAPI || { reportScore:()=>{}, reportLevel:()=>{}, reportSummary:()=>{}, reportComplete:()=>{}, reportEvent:()=>{} };
+window.EduCore.setLanguage('en');
+
+const SPEC = {
+  templateId: 'build_combine', archetype: 'tower_builder', themeId: 'castle',
+  language: 'en', subject: 'Chemistry', topic: 'Simple molecules', theme: 'castle',
+  orientation: 'portrait',
+  concepts: [
+    { id: 'water_components', label: 'Water composition', description: '' },
+    { id: 'co2_components', label: 'Carbon dioxide composition', description: '' },
+    { id: 'methane_components', label: 'Methane composition', description: '' },
+  ],
+  levels: Array.from({ length: 5 }, (_, i) => ({
+    index: i + 1, name: 'Floor ' + (i + 1), timeLimitSeconds: 100 - i * 10, hintsAvailable: Math.max(1, 3 - Math.floor(i / 2)),
+    contentItems: [
+      { id: 't' + i + 'a', prompt: 'Build water (H2O)', answer: ['H','H','O'], distractors: ['C','N','He'], concepts: ['water_components'], difficulty: 0.2 + i * 0.12, explanationOnWrong: 'Water is 2 hydrogen + 1 oxygen.' },
+      { id: 't' + i + 'b', prompt: 'Build CO2', answer: ['C','O','O'], distractors: ['H','N','S'], concepts: ['co2_components'], difficulty: 0.3 + i * 0.12, explanationOnWrong: 'CO2: 1 carbon + 2 oxygens.' },
+      { id: 't' + i + 'c', prompt: 'Build methane (CH4)', answer: ['C','H','H','H','H'], distractors: ['O','N'], concepts: ['methane_components'], difficulty: 0.4 + i * 0.12, explanationOnWrong: 'Methane: 1 carbon + 4 hydrogens.' },
+    ],
+    passingScore: 0.6,
+  })),
+  feedback: { correctPool:['Stacked!','Solid block','Climbing up'], wrongPool:['Crumbled','Try again','Wrong piece'], levelComplete:['Floor done','Next floor'] },
+  visualStyle: { palette: ['#0b1020','#78716c','#fbbf24','#dc2626'], accent: '#fbbf24' },
+  audioCues: ['correct','wrong','levelUp','win','lose'],
+};
+
+const engine = window.EduCore.AdaptiveEngine.create(SPEC);
+const W = 720, H = 1280;
+const TOWER_X = W / 2;
+const BASE_Y = H - 200;
+const BLOCK_H = 60;
+const MenuScene = window.EduCore.buildMenuScene(SPEC);
+
+function multisetEqual(a, b) {
+  if (a.length !== b.length) return false;
+  const A = a.slice().sort(); const B = b.slice().sort();
+  return A.every((v, i) => v === B[i]);
+}
+
+class GameScene extends Phaser.Scene {
+  constructor() { super('GameScene'); }
+  preload() {
+    window.EduCore.preloadSprites(this, ['base','block','wrong_block','flag','backdrop','answer_panel']);
+    window.EduCore.preloadGeneratedConcepts(this, SPEC.concepts.map(c => c.id));
+  }
+  create() {
+    if (this.textures.exists('lib:backdrop')) {
+      this.add.image(W / 2, H / 2, 'lib:backdrop').setDisplaySize(W, H);
+    } else {
+      this.cameras.main.setBackgroundColor('#0c4a6e');
+    }
+    this.score = window.EduCore.makeScoreHud(this, 24, 24);
+    this.timer = window.EduCore.makeTimerHud(this, W - 24, 24, SPEC.levels[0].timeLimitSeconds, () => this.endLevel());
+    this.levelHud = window.EduCore.makeLevelHud(this, W / 2, 24, 1, 5);
+    this.hearts = window.EduCore.makeHeartsHud(this, 80, 90, 3);
+    // Base
+    if (this.textures.exists('lib:base')) {
+      this.add.image(TOWER_X, BASE_Y + 40, 'lib:base').setDisplaySize(280, 80);
+    } else {
+      this.add.rectangle(TOWER_X, BASE_Y + 40, 280, 80, 0x1c1917);
+    }
+    this.startLevel(1);
+  }
+  startLevel(idx) {
+    if (this.stack) this.stack.forEach((s) => s.destroy());
+    if (this.tray) this.tray.forEach((t) => { t.bg.destroy(); t.txt.destroy(); });
+    if (this.promptText) this.promptText.destroy();
+    this.currentLevel = idx;
+    const lvl = SPEC.levels[idx - 1];
+    this.levelHud.set(idx, 5);
+    this.timer.reset(lvl.timeLimitSeconds); this.timer.start();
+    this.attempts = 0; this.correct = 0; this.hintsUsed = 0; this.correctIds = [];
+    this.queue = lvl.contentItems.slice();
+    this.nextItem();
+  }
+  nextItem() {
+    if (this.stack) this.stack.forEach((s) => s.destroy());
+    if (this.tray) this.tray.forEach((t) => { t.bg.destroy(); t.txt.destroy(); });
+    if (this.promptText) this.promptText.destroy();
+    if (this.queue.length === 0) { this.endLevel(); return; }
+    const item = this.queue.shift();
+    this.currentItem = item;
+    this.placed = [];
+    this.stack = [];
+    this.promptText = window.EduCore.addText(this, W / 2, 170, item.prompt, { size: '26px', origin: [0.5, 0.5], wordWrap: { width: W - 80 } });
+    const pool = Phaser.Utils.Array.Shuffle([...(item.answer || []), ...(item.distractors || [])]);
+    const trayY = H - 90;
+    this.tray = pool.map((sym, i) => {
+      const x = 90 + (i % 5) * 130;
+      const bg = this.textures.exists('lib:block')
+        ? this.add.image(x, trayY, 'lib:block').setDisplaySize(110, 70).setInteractive({ useHandCursor: true })
+        : this.add.rectangle(x, trayY, 110, 70, 0x78716c).setStrokeStyle(2, 0x0a0a0a).setInteractive({ useHandCursor: true });
+      const txt = window.EduCore.addText(this, x, trayY, sym, { size: '24px', color: '#ffffff', origin: [0.5, 0.5] });
+      bg.on('pointerup', () => this.placeOnTower(sym, bg, txt));
+      return { bg, txt, sym };
+    });
+    // Confirm + reset
+    const confirm = this.add.rectangle(W / 2 - 130, H - 180, 220, 70, 0x4ade80).setInteractive({ useHandCursor: true });
+    const confirmTxt = window.EduCore.addText(this, W / 2 - 130, H - 180, window.EduCore.t('next'), { size: '24px', color: '#0a0a0a', origin: [0.5, 0.5] });
+    confirm.on('pointerup', () => this.check());
+    const reset = this.add.rectangle(W / 2 + 130, H - 180, 220, 70, 0x374151).setInteractive({ useHandCursor: true });
+    const resetTxt = window.EduCore.addText(this, W / 2 + 130, H - 180, window.EduCore.t('retry'), { size: '24px', color: '#ffffff', origin: [0.5, 0.5] });
+    reset.on('pointerup', () => this.nextItem());
+    this.controls = [confirm, confirmTxt, reset, resetTxt];
+  }
+  placeOnTower(sym, sourceBg, sourceTxt) {
+    this.placed.push(sym);
+    const y = BASE_Y - (this.placed.length - 1) * BLOCK_H - BLOCK_H / 2;
+    const blk = this.textures.exists('lib:block')
+      ? this.add.image(TOWER_X, y, 'lib:block').setDisplaySize(160, BLOCK_H)
+      : this.add.rectangle(TOWER_X, y, 160, BLOCK_H, 0x78716c).setStrokeStyle(2, 0x0a0a0a);
+    const lab = window.EduCore.addText(this, TOWER_X, y, sym, { size: '22px', color: '#ffffff', origin: [0.5, 0.5] });
+    this.stack.push(blk); this.stack.push(lab);
+    sourceBg.setAlpha(0.3); sourceBg.disableInteractive();
+    sourceTxt.setAlpha(0.3);
+  }
+  check() {
+    this.attempts += 1;
+    const ok = multisetEqual(this.placed, this.currentItem.answer);
+    if (ok) {
+      this.correct += 1; this.correctIds.push(this.currentItem.id);
+      this.score.add(10);
+      // Flag on top
+      if (this.textures.exists('lib:flag')) {
+        const y = BASE_Y - this.placed.length * BLOCK_H - 30;
+        this.stack.push(this.add.image(TOWER_X, y, 'lib:flag').setDisplaySize(60, 80));
+      }
+      window.EduCore.showCorrect(this, W / 2, H * 0.4, 10);
+    } else {
+      this.hearts.lose();
+      // Crumble: swap top N blocks to wrong_block colour
+      this.stack.forEach((s) => { if (s.setFillStyle) s.setFillStyle(0x7f1d1d); });
+      this.cameras.main.shake(160, 0.006);
+      window.EduCore.showWrong(this, W / 2, H * 0.4, this.currentItem.explanationOnWrong);
+    }
+    this.time.delayedCall(900, () => {
+      if (this.controls) this.controls.forEach((c) => c.destroy());
+      this.nextItem();
+    });
+  }
+  endLevel() {
+    if (this.endingLevel) return;
+    this.endingLevel = true;
+    this.timer.stop();
+    const lvl = SPEC.levels[this.currentLevel - 1];
+    const timeUsedMs = (lvl.timeLimitSeconds - this.timer.remaining()) * 1000;
+    const res = engine.completeLevel({
+      correct: this.correct, attempts: this.attempts,
+      timeUsedMs, timeLimitMs: lvl.timeLimitSeconds * 1000,
+      hintsUsed: this.hintsUsed, maxHints: lvl.hintsAvailable,
+      attemptedItems: lvl.contentItems, correctItems: this.correctIds,
+    });
+    window.EduMindAPI.reportLevel(this.currentLevel, res.score, res.accuracy, res.durationMs);
+    const delta = res.nextLevel - this.currentLevel;
+    window.EduCore.showLevelComplete(this, { score: res.score, accuracy: res.accuracy, delta }, () => {
+      this.endingLevel = false;
+      if (res.stopReason) { this.finish(); return; }
+      this.startLevel(res.nextLevel);
+    });
+  }
+  finish() {
+    const summary = engine.buildSummary();
+    window.EduMindAPI.reportSummary(summary);
+    window.EduMindAPI.reportComplete(summary.totalScore, summary.masteryAchieved, summary.durationSeconds);
+    this.scene.start('EndScene');
+  }
+}
+class EndScene extends (window.EduCore.buildEndScene(() => engine.buildSummary(), () => location.reload(), () => window.EduMindAPI.reportEvent('exit', {}))) {}
+
+new Phaser.Game({ type: Phaser.AUTO, parent: 'game-container', width: W, height: H, backgroundColor: '#0b1020', scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH }, scene: [MenuScene, GameScene, EndScene] });
+</script>
+</body>
+</html>

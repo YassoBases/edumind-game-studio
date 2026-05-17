@@ -1,0 +1,146 @@
+{
+  "_doc": "Per-theme sprite roles. Files resolved against backend/sprites/library/<theme>/<file>. Missing PNGs fall back to programmatic SVG placeholders generated at build time (see src/sprites/placeholders.ts). When you drop real Kenney PNGs in, they take precedence automatically.",
+  "_attribution": "Real PNGs to drop in (CC0): Kenney Racing Pack (kenney.nl/assets/racing-pack), Kenney Sports Pack, Kenney Tower Defense, Kenney RPG Pack.",
+  "themes": {
+    "car_racing_f1": {
+      "player": "library/car_racing_f1/car-player.png",
+      "rival": "library/car_racing_f1/car-rival.png",
+      "road": "library/car_racing_f1/road-tile.png",
+      "horizon": "library/car_racing_f1/horizon.png",
+      "barrier_left": "library/car_racing_f1/barrier-left.png",
+      "barrier_right": "library/car_racing_f1/barrier-right.png",
+      "answer_panel": "library/car_racing_f1/answer-panel.png",
+      "crash_particles": "library/car_racing_f1/crash.png"
+    },
+    "car_racing_street": {
+      "player": "library/car_racing_street/car-player.png",
+      "rival": "library/car_racing_street/car-rival.png",
+      "road": "library/car_racing_street/road-tile.png",
+      "horizon": "library/car_racing_street/horizon.png",
+      "barrier_left": "library/car_racing_street/barrier-left.png",
+      "barrier_right": "library/car_racing_street/barrier-right.png",
+      "answer_panel": "library/car_racing_street/answer-panel.png",
+      "crash_particles": "library/car_racing_street/crash.png"
+    },
+    "motorbike": {
+      "player": "library/motorbike/bike-player.png",
+      "rival": "library/motorbike/bike-rival.png",
+      "road": "library/motorbike/road-tile.png",
+      "horizon": "library/motorbike/horizon.png",
+      "answer_panel": "library/motorbike/answer-panel.png",
+      "crash_particles": "library/motorbike/crash.png"
+    },
+    "kart": {
+      "player": "library/kart/kart-player.png",
+      "rival": "library/kart/kart-rival.png",
+      "road": "library/kart/track-tile.png",
+      "horizon": "library/kart/horizon.png",
+      "answer_panel": "library/kart/answer-panel.png",
+      "crash_particles": "library/kart/crash.png"
+    },
+    "football": {
+      "player": "library/football/player.png",
+      "goalkeeper": "library/football/goalkeeper.png",
+      "ball": "library/football/ball.png",
+      "goal_frame": "library/football/goal-frame.png",
+      "field": "library/football/field.png",
+      "crowd": "library/football/crowd.png",
+      "answer_panel": "library/football/answer-panel.png"
+    },
+    "basketball": {
+      "player": "library/basketball/player.png",
+      "goalkeeper": "library/basketball/blocker.png",
+      "ball": "library/basketball/ball.png",
+      "goal_frame": "library/basketball/hoop.png",
+      "field": "library/basketball/court.png",
+      "crowd": "library/basketball/crowd.png",
+      "answer_panel": "library/basketball/answer-panel.png"
+    },
+    "hockey": {
+      "player": "library/hockey/player.png",
+      "goalkeeper": "library/hockey/goalie.png",
+      "ball": "library/hockey/puck.png",
+      "goal_frame": "library/hockey/net.png",
+      "field": "library/hockey/rink.png",
+      "crowd": "library/hockey/crowd.png",
+      "answer_panel": "library/hockey/answer-panel.png"
+    },
+    "archery": {
+      "player": "library/archery/archer.png",
+      "goalkeeper": "library/archery/wind-indicator.png",
+      "ball": "library/archery/arrow.png",
+      "goal_frame": "library/archery/target.png",
+      "field": "library/archery/range.png",
+      "crowd": "library/archery/crowd.png",
+      "answer_panel": "library/archery/answer-panel.png"
+    },
+    "castle": {
+      "base": "library/castle/foundation.png",
+      "block": "library/castle/block.png",
+      "wrong_block": "library/castle/cracked-block.png",
+      "flag": "library/castle/flag.png",
+      "backdrop": "library/castle/backdrop.png",
+      "answer_panel": "library/castle/answer-panel.png"
+    },
+    "rocket": {
+      "base": "library/rocket/launchpad.png",
+      "block": "library/rocket/stage.png",
+      "wrong_block": "library/rocket/damaged-stage.png",
+      "flag": "library/rocket/nose-cone.png",
+      "backdrop": "library/rocket/sky.png",
+      "answer_panel": "library/rocket/answer-panel.png"
+    },
+    "skyscraper": {
+      "base": "library/skyscraper/foundation.png",
+      "block": "library/skyscraper/floor.png",
+      "wrong_block": "library/skyscraper/wonky-floor.png",
+      "flag": "library/skyscraper/antenna.png",
+      "backdrop": "library/skyscraper/city.png",
+      "answer_panel": "library/skyscraper/answer-panel.png"
+    },
+    "treehouse": {
+      "base": "library/treehouse/trunk.png",
+      "block": "library/treehouse/plank.png",
+      "wrong_block": "library/treehouse/rotten-plank.png",
+      "flag": "library/treehouse/leaves.png",
+      "backdrop": "library/treehouse/forest.png",
+      "answer_panel": "library/treehouse/answer-panel.png"
+    },
+    "fantasy": {
+      "hero": "library/fantasy/hero.png",
+      "path": "library/fantasy/path-tile.png",
+      "fork": "library/fantasy/signpost.png",
+      "backdrop": "library/fantasy/landscape.png",
+      "enemy": "library/fantasy/goblin.png",
+      "treasure": "library/fantasy/chest.png",
+      "answer_panel": "library/fantasy/scroll.png"
+    },
+    "sci_fi": {
+      "hero": "library/sci_fi/astronaut.png",
+      "path": "library/sci_fi/station-tile.png",
+      "fork": "library/sci_fi/airlock.png",
+      "backdrop": "library/sci_fi/stars.png",
+      "enemy": "library/sci_fi/drone.png",
+      "treasure": "library/sci_fi/datapad.png",
+      "answer_panel": "library/sci_fi/holo-panel.png"
+    },
+    "detective": {
+      "hero": "library/detective/sleuth.png",
+      "path": "library/detective/alley-tile.png",
+      "fork": "library/detective/door.png",
+      "backdrop": "library/detective/city-noir.png",
+      "enemy": "library/detective/suspect.png",
+      "treasure": "library/detective/case-file.png",
+      "answer_panel": "library/detective/clue-card.png"
+    },
+    "anime": {
+      "hero": "library/anime/protagonist.png",
+      "path": "library/anime/road-tile.png",
+      "fork": "library/anime/torii.png",
+      "backdrop": "library/anime/cherry-blossom.png",
+      "enemy": "library/anime/rival.png",
+      "treasure": "library/anime/scroll.png",
+      "answer_panel": "library/anime/dialogue-panel.png"
+    }
+  }
+}

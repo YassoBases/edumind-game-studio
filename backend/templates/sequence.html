@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<!-- EduMind Template: sequence — drag items to arrange in correct order (process steps, timelines). -->
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>*{margin:0;padding:0;box-sizing:border-box;touch-action:none;}html,body{width:100%;height:100%;overflow:hidden;background:#0b1020;}#game-container{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;}canvas{display:block;}</style>
+</head>
+<body>
+<div id="game-container"></div>
+<script src="https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.min.js"></script>
+<script src="/client/EduCore.js"></script>
+<script>
+window.EduMindAPI = window.EduMindAPI || { reportScore:()=>{}, reportLevel:()=>{}, reportSummary:()=>{}, reportComplete:()=>{}, reportEvent:()=>{} };
+window.EduCore.setLanguage('en');
+
+const SPEC = {
+  templateId: 'sequence', language: 'en', subject: 'Biology', topic: 'Steps of mitosis', theme: 'lab', orientation: 'portrait',
+  concepts: [
+    { id: 'mitosis_phases', label: 'Mitosis phases', description: 'Order of cell division phases' },
+    { id: 'mitosis_what', label: 'What happens in each phase', description: 'Process details' },
+  ],
+  levels: Array.from({ length: 5 }, (_, i) => ({
+    index: i + 1, name: 'Level ' + (i + 1), timeLimitSeconds: 100 - i * 10, hintsAvailable: Math.max(1, 3 - Math.floor(i / 2)),
+    contentItems: [
+      { id: 'q' + i + 'a', prompt: 'Prophase', answer: '1', concepts: ['mitosis_phases'], difficulty: 0.2 + i * 0.1, explanationOnWrong: 'Prophase is the first phase: chromatin condenses.' },
+      { id: 'q' + i + 'b', prompt: 'Metaphase', answer: '2', concepts: ['mitosis_phases'], difficulty: 0.25 + i * 0.1, explanationOnWrong: 'In metaphase chromosomes align at the equator.' },
+      { id: 'q' + i + 'c', prompt: 'Anaphase', answer: '3', concepts: ['mitosis_phases'], difficulty: 0.3 + i * 0.1, explanationOnWrong: 'Anaphase splits sister chromatids.' },
+      { id: 'q' + i + 'd', prompt: 'Telophase', answer: '4', concepts: ['mitosis_phases','mitosis_what'], difficulty: 0.35 + i * 0.1, explanationOnWrong: 'Telophase reforms the nuclei.' },
+    ],
+    passingScore: 0.6,
+  })),
+  feedback: { correctPool:['In order!','Right step','Good'], wrongPool:['Wrong slot','Swap them','Re-check'], levelComplete:['Done','Next phase'] },
+  visualStyle: { palette:['#0b1020','#1f2937','#4ade80','#fbbf24'], accent:'#4ade80' },
+  audioCues: ['correct','wrong','levelUp','win','lose'],
+};
+
+const engine = window.EduCore.AdaptiveEngine.create(SPEC);
+const W = 720, H = 1280;
+const MenuScene = window.EduCore.buildMenuScene(SPEC);
+
+class GameScene extends Phaser.Scene {
+  constructor() { super('GameScene'); }
+  create() {
+    this.score = window.EduCore.makeScoreHud(this, 24, 24);
+    this.timer = window.EduCore.makeTimerHud(this, W - 24, 24, SPEC.levels[0].timeLimitSeconds, () => this.endLevel());
+    this.levelHud = window.EduCore.makeLevelHud(this, W / 2, 24, 1, 5);
+    this.hearts = window.EduCore.makeHeartsHud(this, 60, 80, 3);
+    this.startLevel(1);
+  }
+  startLevel(idx) {
+    if (this.layer) this.layer.destroy(true);
+    this.layer = this.add.container(0, 0);
+    const lvl = SPEC.levels[idx - 1];
+    this.currentLevel = idx;
+    this.levelHud.set(idx, 5);
+    this.timer.reset(lvl.timeLimitSeconds); this.timer.start();
+    this.attempts = 0; this.correct = 0; this.hintsUsed = 0; this.correctIds = [];
+
+    const slots = [];
+    const slotCount = lvl.contentItems.length;
+    const slotY0 = 240;
+    for (let i = 0; i < slotCount; i += 1) {
+      const y = slotY0 + i * 130;
+      const rect = this.add.rectangle(W / 2, y, W - 120, 110, 0x1f2937).setStrokeStyle(2, 0x4ade80);
+      window.EduCore.addText(this, 80, y, String(i + 1), { size: '32px', color: '#fbbf24', origin: [0.5, 0.5] });
+      slots.push({ index: i + 1, x: W / 2, y, w: W - 120, h: 110, rect, filled: null });
+    }
+    this.slots = slots;
+
+    const shuffled = Phaser.Utils.Array.Shuffle(lvl.contentItems.slice());
+    this.cards = shuffled.map((it, i) => {
+      const x = 100 + (i % 2) * 240;
+      const y = slotY0 + slotCount * 130 + 60 + Math.floor(i / 2) * 120;
+      const rect = this.add.rectangle(x, y, 220, 100, 0x4338ca).setInteractive({ draggable: true, useHandCursor: true });
+      const label = window.EduCore.addText(this, x, y, it.prompt, { size: '20px', origin: [0.5, 0.5], wordWrap: { width: 200 } });
+      const card = { rect, label, item: it, ox: x, oy: y, slot: null };
+      rect.on('drag', (_p, dx, dy) => { rect.x = dx; rect.y = dy; label.x = dx; label.y = dy; });
+      rect.on('dragend', () => this.onDrop(card));
+      return card;
+    });
+  }
+  onDrop(card) {
+    const slot = this.slots.find(s => Math.abs(card.rect.x - s.x) < s.w / 2 && Math.abs(card.rect.y - s.y) < s.h / 2 && !s.filled);
+    if (!slot) { card.rect.x = card.ox; card.rect.y = card.oy; card.label.x = card.ox; card.label.y = card.oy; return; }
+    this.attempts += 1;
+    if (String(slot.index) === card.item.answer) {
+      this.correct += 1; this.correctIds.push(card.item.id); this.score.add(10);
+      window.EduCore.showCorrect(this, W / 2, 600, 10);
+      slot.filled = card; card.rect.setFillStyle(0x065f46);
+      card.rect.x = slot.x; card.rect.y = slot.y; card.label.x = slot.x; card.label.y = slot.y;
+    } else {
+      this.hearts.lose();
+      window.EduCore.showWrong(this, W / 2, 600, card.item.explanationOnWrong);
+      card.rect.x = card.ox; card.rect.y = card.oy; card.label.x = card.ox; card.label.y = card.oy;
+    }
+    if (this.slots.every(s => s.filled)) this.endLevel();
+  }
+  endLevel() {
+    this.timer.stop();
+    const lvl = SPEC.levels[this.currentLevel - 1];
+    const timeUsedMs = (lvl.timeLimitSeconds - this.timer.remaining()) * 1000;
+    const res = engine.completeLevel({ correct: this.correct, attempts: this.attempts, timeUsedMs, timeLimitMs: lvl.timeLimitSeconds * 1000, hintsUsed: this.hintsUsed, maxHints: lvl.hintsAvailable, attemptedItems: lvl.contentItems, correctItems: this.correctIds });
+    window.EduMindAPI.reportLevel(this.currentLevel, res.score, res.accuracy, res.durationMs);
+    window.EduCore.cues.levelUp();
+    if (res.stopReason) this.finish(); else this.time.delayedCall(700, () => this.startLevel(res.nextLevel));
+  }
+  finish() {
+    const summary = engine.buildSummary();
+    window.EduMindAPI.reportSummary(summary);
+    window.EduMindAPI.reportComplete(summary.totalScore, summary.masteryAchieved, summary.durationSeconds);
+    this.scene.start('EndScene');
+  }
+}
+class EndScene extends (window.EduCore.buildEndScene(() => engine.buildSummary(), () => location.reload(), () => window.EduMindAPI.reportEvent('exit', {}))) {}
+
+new Phaser.Game({ type: Phaser.AUTO, parent: 'game-container', width: W, height: H, backgroundColor: '#0b1020', scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH }, scene: [MenuScene, GameScene, EndScene] });
+</script>
+</body>
+</html>

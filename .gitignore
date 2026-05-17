@@ -1,0 +1,59 @@
+# ---- Secrets ----
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ---- Node ----
+node_modules/
+dist/
+*.tsbuildinfo
+.cache/
+coverage/
+.nyc_output/
+
+# ---- Prisma ----
+# (migrations/ ARE committed — they're authoritative DB history)
+
+# ---- Flutter / Dart ----
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+*.g.dart
+*.freezed.dart
+pubspec.lock
+flutter_module/.flutter-plugins
+flutter_module/web/main.dart.js*
+flutter_module/web/flutter_service_worker.js
+flutter_module/web/canvaskit/
+flutter_module/web/assets/
+# Keep flutter_module/web/index.html and manifest.json (committed scaffold)
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ---- Logs ----
+*.log
+logs/
+
+# ---- Local artifacts (smoke-test outputs, not source) ----
+gen.json
+compose*.json
+backend/generated-game.html
+backend/lane-racer-photosynthesis.html
+backend/scripts/
+
+# ---- Sprite assets (drop your Kenney PNGs in; we don't commit binary art here) ----
+backend/sprites/library/**/*.png
+backend/sprites/library/**/*.jpg
+backend/sprites/library/**/*.jpeg
+backend/sprites/library/**/*.webp

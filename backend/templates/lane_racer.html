@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<!--
+  EduMind Archetype: lane_racer
+  Pedagogical mechanic: target_practice (one correct + 3 distractors per question).
+  Presentation: 3-lane top-down racer. Player auto-advances; tap left half to swap lane left,
+  right half to swap lane right. Answer panels float toward the player in random lanes.
+  Hitting the correct panel = points + speed boost + cue.correct. Wrong = heart lost + wobble.
+  Difficulty scales by speed + question depth + spawn rate; mechanic stays familiar.
+
+  Hard contract preserved: 3 scenes, 5 levels via content swap, EduCore everywhere,
+  bridge calls reportLevel/reportSummary/reportComplete, AdaptiveEngine drives transitions.
+
+  Sprite roles consumed:  player, rival (unused for now), road, horizon, answer_panel, crash_particles
+  Generated-sprite hook:   topic icons keyed by concept id appear inside each answer panel
+-->
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>*{margin:0;padding:0;box-sizing:border-box;touch-action:none;}html,body{width:100%;height:100%;overflow:hidden;background:#0b1020;}#game-container{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;}canvas{display:block;}</style>
+</head>
+<body>
+<div id="game-container"></div>
+<script src="https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.min.js"></script>
+<script src="/client/EduCore.js"></script>
+<script>
+// Sprite/bridge stubs for standalone preview only. The backend scaffold replaces these with
+// real values; never rely on these defaults in a generated game.
+window.EduSprites = window.EduSprites || { library: {}, generated: {} };
+window.EduMindAPI = window.EduMindAPI || { reportScore:()=>{}, reportLevel:()=>{}, reportSummary:()=>{}, reportComplete:()=>{}, reportEvent:()=>{} };
+window.EduCore.setLanguage('en');
+
+const SPEC = {
+  templateId: 'target_practice',
+  archetype: 'lane_racer',
+  themeId: 'car_racing_f1',
+  language: 'en',
+  subject: 'Biology',
+  topic: 'Photosynthesis',
+  theme: 'F1 racing',
+  orientation: 'portrait',
+  concepts: [
+    { id: 'overall_equation', label: 'Overall equation', description: 'Reactants and products of photosynthesis' },
+    { id: 'light_reactions', label: 'Light reactions', description: 'Light-dependent stage' },
+    { id: 'calvin_cycle', label: 'Calvin cycle', description: 'Light-independent stage' },
+    { id: 'pigments', label: 'Pigments', description: 'Chlorophyll a, b, carotenoids' },
+    { id: 'structures', label: 'Cell structures', description: 'Chloroplasts, thylakoids, stroma' },
+    { id: 'limiting_factors', label: 'Limiting factors', description: 'Light, CO2, temperature' },
+  ],
+  levels: Array.from({ length: 5 }, (_, i) => ({
+    index: i + 1, name: 'Lap ' + (i + 1), timeLimitSeconds: 60 - i * 5,
+    hintsAvailable: Math.max(1, 3 - Math.floor(i / 2)),
+    contentItems: [
+      { id: 'l' + i + 'a', prompt: 'Reactants of photosynthesis?', answer: 'CO2 + H2O', distractors: ['O2 + glucose','ATP + NADPH','Glucose + O2'], concepts: ['overall_equation'], difficulty: 0.1 + i * 0.15, explanationOnWrong: 'Plants take in CO2 and H2O; they produce O2 and glucose.' },
+      { id: 'l' + i + 'b', prompt: 'Where do light reactions occur?', answer: 'Thylakoid membrane', distractors: ['Stroma','Mitochondria','Nucleus'], concepts: ['light_reactions','structures'], difficulty: 0.2 + i * 0.15, explanationOnWrong: 'Light reactions happen in the thylakoid membrane of chloroplasts.' },
+      { id: 'l' + i + 'c', prompt: 'Main green pigment?', answer: 'Chlorophyll a', distractors: ['Chlorophyll b','Carotenoid','Xanthophyll'], concepts: ['pigments'], difficulty: 0.15 + i * 0.15, explanationOnWrong: 'Chlorophyll a is the primary pigment driving photosynthesis.' },
+      { id: 'l' + i + 'd', prompt: 'What does the Calvin cycle produce?', answer: 'Glucose', distractors: ['ATP only','Oxygen','NADPH'], concepts: ['calvin_cycle'], difficulty: 0.25 + i * 0.15, explanationOnWrong: 'The Calvin cycle fixes CO2 into glucose using ATP and NADPH.' },
+      { id: 'l' + i + 'e', prompt: 'Limiting factor on a cloudy day?', answer: 'Light intensity', distractors: ['CO2','Temperature','Water'], concepts: ['limiting_factors'], difficulty: 0.3 + i * 0.15, explanationOnWrong: 'On a cloudy day, light becomes the limiting factor.' },
+    ],
+    passingScore: 0.6,
+  })),
+  feedback: {
+    correctPool: ['Pole position!', 'Clean line', 'Onto the next bend'],
+    wrongPool: ['Off the racing line', 'Reset and go', 'Check your apex'],
+    levelComplete: ['Lap finished', 'Pit done, next lap'],
+  },
+  visualStyle: { palette: ['#0b1020','#1f2937','#dc2626','#fbbf24'], accent: '#fbbf24' },
+  audioCues: ['correct','wrong','win','lose','levelUp'],
+};
+
+const engine = window.EduCore.AdaptiveEngine.create(SPEC);
+const W = 720, H = 1280;
+const LANE_X = [W * 0.22, W * 0.50, W * 0.78];
+const PLAYER_Y = H * 0.82;
+const PROMPT_BAND_H = 200;   // top region reserved for question text
+const GATE_SPAWN_Y = PROMPT_BAND_H + 40;
+// Per-level scroll speed (px/sec). Slow enough to read the answer panel before the gate
+// reaches the player — distance covered = ~880 px, so 110 px/s gives 8s reading window at L1.
+const LEVEL_SPEEDS = [110, 140, 170, 200, 230];
+// Inter-gate pause (ms) after the previous gate is resolved.
+const LEVEL_PAUSE_MS = [700, 600, 500, 400, 350];
+
+const MenuScene = window.EduCore.buildMenuScene(SPEC);
+
+class GameScene extends Phaser.Scene {
+  constructor() { super('GameScene'); }
+  preload() {
+    window.EduCore.preloadSprites(this, ['player','rival','road','horizon','answer_panel','crash_particles']);
+    window.EduCore.preloadGeneratedConcepts(this, SPEC.concepts.map(c => c.id));
+  }
+  create() {
+    this.cameras.main.setBackgroundColor('#0b1020');
+    this.buildBackground();
+    // Prompt band — dim strip at the top hosting the question
+    this.add.rectangle(W / 2, PROMPT_BAND_H / 2, W, PROMPT_BAND_H, 0x000000, 0.55).setDepth(60);
+    this.score = window.EduCore.makeScoreHud(this, 24, 24);
+    this.timer = window.EduCore.makeTimerHud(this, W - 24, 24, SPEC.levels[0].timeLimitSeconds, () => this.endLevel());
+    this.levelHud = window.EduCore.makeLevelHud(this, W / 2, 24, 1, 5);
+    this.hearts = window.EduCore.makeHeartsHud(this, 80, 90, 3);
+    // Question display lives in the prompt band, updated per gate
+    this.promptText = window.EduCore.addText(this, W / 2, 140, '', {
+      size: '28px', color: '#ffffff', origin: [0.5, 0.5], wordWrap: { width: W - 60 },
+    });
+    this.promptText.setDepth(61);
+    this.buildPlayer();
+    this.bindInput();
+    this.startLevel(1);
+  }
+  buildBackground() {
+    // Optional AI-generated full backdrop — if missing, fall back to horizon + scrolling road.
+    if (this.textures.exists('gen:theme_background')) {
+      this.add.image(W / 2, H / 2, 'gen:theme_background').setDisplaySize(W, H).setDepth(-10);
+    }
+    this.bgLayer = this.add.container(0, 0);
+    if (this.textures.exists('lib:horizon')) {
+      this.bgLayer.add(this.add.image(W / 2, 280, 'lib:horizon').setDisplaySize(W, 240));
+    } else if (!this.textures.exists('gen:theme_background')) {
+      this.bgLayer.add(this.add.rectangle(W / 2, 280, W, 240, 0x312e81));
+    }
+    if (this.textures.exists('lib:road')) {
+      this.road1 = this.add.image(W / 2, 760, 'lib:road').setDisplaySize(W, 720);
+      this.road2 = this.add.image(W / 2, 40, 'lib:road').setDisplaySize(W, 720);
+    } else {
+      this.road1 = this.add.rectangle(W / 2, 760, W, 720, 0x0f172a, 0.7);
+      this.road2 = this.add.rectangle(W / 2, 40, W, 720, 0x0f172a, 0.7);
+    }
+  }
+  buildPlayer() {
+    this.laneIndex = 1;
+    const x = LANE_X[this.laneIndex];
+    if (this.textures.exists('lib:player')) {
+      this.player = this.add.image(x, PLAYER_Y, 'lib:player').setDisplaySize(96, 144);
+    } else {
+      this.player = this.add.rectangle(x, PLAYER_Y, 96, 144, 0xdc2626).setStrokeStyle(2, 0x0f172a);
+    }
+    this.player.setDepth(50);
+  }
+  bindInput() {
+    this.input.on('pointerdown', (p) => {
+      if (this.locked) return;
+      if (p.x < W / 2 && this.laneIndex > 0) this.swapLane(this.laneIndex - 1);
+      if (p.x >= W / 2 && this.laneIndex < 2) this.swapLane(this.laneIndex + 1);
+    });
+  }
+  swapLane(target) {
+    this.laneIndex = target;
+    this.tweens.add({ targets: this.player, x: LANE_X[target], duration: 160, ease: 'sine.out' });
+  }
+  startLevel(idx) {
+    this.currentLevel = idx;
+    const lvl = SPEC.levels[idx - 1];
+    this.levelHud.set(idx, 5);
+    this.timer.reset(lvl.timeLimitSeconds);
+    this.timer.start();
+    this.speed = LEVEL_SPEEDS[idx - 1];
+    this.pauseMs = LEVEL_PAUSE_MS[idx - 1];
+    this.attempts = 0; this.correct = 0; this.hintsUsed = 0; this.correctIds = [];
+    this.queue = Phaser.Utils.Array.Shuffle(lvl.contentItems.slice());
+    this.gates = []; // single active gate at a time
+    this.spawnGate();
+  }
+  spawnGate() {
+    if (this.locked) return;
+    if (this.queue.length === 0) {
+      // Wait for in-flight gate to resolve; endLevel() fires when the last one is done.
+      return;
+    }
+    if (this.gates.some((g) => !g.resolved)) return; // never two active gates
+    const item = this.queue.shift();
+    this.currentItem = item;
+    this.promptText.setText(item.prompt);
+    const correctLane = Phaser.Math.Between(0, 2);
+    // Build three lane options: correct in correctLane, two distractors filling the others.
+    const distractors = (item.distractors || []).slice();
+    const options = new Array(3);
+    options[correctLane] = item.answer;
+    let dIdx = 0;
+    for (let i = 0; i < 3; i += 1) {
+      if (i === correctLane) continue;
+      options[i] = distractors[dIdx % distractors.length] || `Option ${i + 1}`;
+      dIdx += 1;
+    }
+    const panels = LANE_X.map((x, i) => this.makePanel(x, GATE_SPAWN_Y, options[i], item, i === correctLane));
+    this.gates.push({ panels, item, resolved: false, y: GATE_SPAWN_Y });
+  }
+  makePanel(x, y, label, item, isCorrect) {
+    const w = 200, h = 130;
+    const bg = this.textures.exists('lib:answer_panel')
+      ? this.add.image(x, y, 'lib:answer_panel').setDisplaySize(w, h)
+      : this.add.rectangle(x, y, w, h, 0x1f2937, 0.95).setStrokeStyle(3, 0xfbbf24);
+    bg.setDepth(30);
+    const conceptId = item.concepts[0];
+    let icon = null;
+    if (conceptId && this.textures.exists('gen:' + conceptId)) {
+      icon = this.add.image(x, y - 32, 'gen:' + conceptId).setDisplaySize(56, 56).setDepth(31);
+    }
+    const txt = window.EduCore.addText(this, x, y + (icon ? 28 : 0), label, {
+      size: '24px', color: '#ffffff', origin: [0.5, 0.5], wordWrap: { width: w - 16 },
+    });
+    txt.setDepth(32);
+    return { bg, icon, txt, x, isCorrect, item };
+  }
+  update(_t, delta) {
+    if (this.locked) return;
+    const dt = delta / 1000;
+    const dy = this.speed * dt;
+    // Road scroll
+    this.road1.y += dy;
+    this.road2.y += dy;
+    if (this.road1.y >= H + 360) this.road1.y = this.road2.y - 720;
+    if (this.road2.y >= H + 360) this.road2.y = this.road1.y - 720;
+    // Advance gates
+    for (const g of this.gates) {
+      if (g.resolved) continue;
+      g.y += dy;
+      for (const p of g.panels) {
+        p.bg.y = g.y;
+        if (p.icon) p.icon.y = g.y - 22;
+        p.txt.y = g.y + (p.icon ? 30 : 0);
+      }
+      if (g.y > PLAYER_Y - 60) {
+        // Detect collision with player's lane
+        const hitPanel = g.panels.find((p) => Math.abs(p.x - LANE_X[this.laneIndex]) < 60);
+        this.resolveGate(g, hitPanel);
+      }
+    }
+    // Cleanup off-screen gates
+    this.gates = this.gates.filter((g) => {
+      if (g.resolved && g.y > H + 200) {
+        g.panels.forEach((p) => { p.bg.destroy(); if (p.icon) p.icon.destroy(); p.txt.destroy(); });
+        return false;
+      }
+      return true;
+    });
+    // End-of-level: queue drained, every gate resolved AND scrolled off-screen
+    if (this.queue.length === 0 && this.gates.length === 0 && !this.endingLevel) {
+      this.endingLevel = true;
+      this.time.delayedCall(800, () => this.endLevel());
+    }
+  }
+  resolveGate(gate, hitPanel) {
+    if (gate.resolved) return;
+    gate.resolved = true;
+    this.attempts += 1;
+    if (hitPanel && hitPanel.isCorrect) {
+      this.correct += 1;
+      this.correctIds.push(gate.item.id);
+      this.score.add(10);
+      window.EduCore.showCorrect(this, W / 2, H * 0.50, 10);
+      this.speed = Math.min(this.speed * 1.05, LEVEL_SPEEDS[this.currentLevel - 1] * 1.25);
+    } else {
+      this.hearts.lose();
+      this.cameras.main.shake(180, 0.008);
+      window.EduCore.showWrong(this, W / 2, H * 0.50, gate.item.explanationOnWrong);
+      this.speed = Math.max(this.speed * 0.90, LEVEL_SPEEDS[this.currentLevel - 1] * 0.75);
+      if (hitPanel) hitPanel.bg.setStrokeStyle && hitPanel.bg.setStrokeStyle(4, 0xdc2626);
+    }
+    // Schedule the next gate after a short pause so the player can register the result
+    if (this.queue.length > 0) {
+      this.time.delayedCall(this.pauseMs, () => this.spawnGate());
+    }
+  }
+  endLevel() {
+    if (this.locked) return;
+    this.locked = true;
+    this.timer.stop();
+    const lvl = SPEC.levels[this.currentLevel - 1];
+    const timeUsedMs = (lvl.timeLimitSeconds - this.timer.remaining()) * 1000;
+    const res = engine.completeLevel({
+      correct: this.correct, attempts: this.attempts,
+      timeUsedMs, timeLimitMs: lvl.timeLimitSeconds * 1000,
+      hintsUsed: this.hintsUsed, maxHints: lvl.hintsAvailable,
+      attemptedItems: lvl.contentItems, correctItems: this.correctIds,
+    });
+    window.EduMindAPI.reportLevel(this.currentLevel, res.score, res.accuracy, res.durationMs);
+    const delta = res.nextLevel - this.currentLevel;
+    window.EduCore.showLevelComplete(this, { score: res.score, accuracy: res.accuracy, delta }, () => {
+      this.locked = false;
+      this.endingLevel = false;
+      if (res.stopReason) { this.finish(); return; }
+      this.gates.forEach((g) => g.panels.forEach((p) => { p.bg.destroy(); if (p.icon) p.icon.destroy(); p.txt.destroy(); }));
+      this.gates = [];
+      this.promptText.setText('');
+      this.startLevel(res.nextLevel);
+    });
+  }
+  finish() {
+    const summary = engine.buildSummary();
+    window.EduMindAPI.reportSummary(summary);
+    window.EduMindAPI.reportComplete(summary.totalScore, summary.masteryAchieved, summary.durationSeconds);
+    this.scene.start('EndScene');
+  }
+}
+
+class EndScene extends (window.EduCore.buildEndScene(() => engine.buildSummary(), () => location.reload(), () => window.EduMindAPI.reportEvent('exit', {}))) {}
+
+new Phaser.Game({
+  type: Phaser.AUTO,
+  parent: 'game-container',
+  width: W,
+  height: H,
+  backgroundColor: '#0b1020',
+  scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+  scene: [MenuScene, GameScene, EndScene],
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,157 @@
+{
+  "entries": [
+    {
+      "signature": "browser_storage:localStorage",
+      "occurrences": 1,
+      "last_seen": "2026-05-15T00:00:00.000Z",
+      "root_cause": "Model wrote localStorage.setItem/getItem for persistence; WebView blocks these in some configurations and they are banned by spec.",
+      "fix_template": "Remove every localStorage/sessionStorage/cookie/indexedDB reference. The game must hold state only in memory; persistence is handled by Flutter via the bridge.",
+      "auto_patch": {
+        "type": "regex_replace",
+        "pattern": "(?:window\\.)?localStorage\\.[a-zA-Z]+\\([^)]*\\);?",
+        "replacement": "/* removed: browser storage banned */"
+      },
+      "verified": true
+    },
+    {
+      "signature": "bridge_missing:reportSummary",
+      "occurrences": 1,
+      "last_seen": "2026-05-15T00:00:00.000Z",
+      "root_cause": "Model called reportComplete at session end but skipped reportSummary, so Flutter cannot render the per-concept breakdown screen.",
+      "fix_template": "In the finish() function (or wherever the game ends), call window.EduMindAPI.reportSummary(engine.buildSummary()) BEFORE window.EduMindAPI.reportComplete(...). Both must fire, in that order.",
+      "verified": true
+    },
+    {
+      "signature": "scenes:4",
+      "occurrences": 1,
+      "last_seen": "2026-05-15T00:00:00.000Z",
+      "root_cause": "Model added a 4th scene (LoadingScene or BetweenLevelScene). Spec requires exactly Menu/Game/End and forbids inter-level scene transitions.",
+      "fix_template": "Delete the extra scene class. Move any logic into GameScene as a private method that runs between levels (e.g. via this.time.delayedCall).",
+      "verified": true
+    },
+    {
+      "signature": "no_educore:window.EduCore.makeScoreHud",
+      "occurrences": 1,
+      "last_seen": "2026-05-15T00:00:00.000Z",
+      "root_cause": "Model hand-rolled a score display with scene.add.text. Templates must use the shared HUD primitive.",
+      "fix_template": "Replace the custom score text and its update calls with: const score = window.EduCore.makeScoreHud(this, 24, 24); ... score.add(10);",
+      "verified": true
+    },
+    {
+      "signature": "levels:3",
+      "occurrences": 1,
+      "last_seen": "2026-05-15T00:00:00.000Z",
+      "root_cause": "Model produced only 3 levels in the spec. Engine requires exactly 5.",
+      "fix_template": "Re-emit the spec with 5 levels, monotonic difficulty, each ≥3 content items, total ≥25 items.",
+      "verified": true
+    },
+    {
+      "signature": "content_short:18",
+      "occurrences": 1,
+      "last_seen": "2026-05-15T00:00:00.000Z",
+      "root_cause": "Total content items across 5 levels is below 25, breaking the adaptive variety guarantee.",
+      "fix_template": "Add more content items to the levels with the fewest. Aim for at least 5 items per level on average. Each must have a distinct prompt and an explanationOnWrong.",
+      "verified": true
+    },
+    {
+      "signature": "concept_missing_on_item",
+      "occurrences": 1,
+      "last_seen": "2026-05-15T00:00:00.000Z",
+      "root_cause": "A content item has an empty concepts[] array. Concept mastery cannot be tracked without at least one tag.",
+      "fix_template": "Re-emit the offending items with concepts: [<existing concept id>]. If the item teaches a new sub-skill, add a new concept to spec.concepts first.",
+      "verified": true
+    },
+    {
+      "signature": "keyboard_input",
+      "occurrences": 1,
+      "last_seen": "2026-05-15T00:00:00.000Z",
+      "root_cause": "Model wired this.input.keyboard or a document key listener. WebView on Android often blocks soft keyboard events; touch is the only supported input.",
+      "fix_template": "Remove all keyboard listeners. Replace with on-screen buttons via Phaser shapes + setInteractive({ useHandCursor: true }).",
+      "auto_patch": {
+        "type": "regex_replace",
+        "pattern": "this\\.input\\.keyboard\\.[a-zA-Z]+\\([^)]*\\);?",
+        "replacement": "/* removed: keyboard input not supported */"
+      },
+      "verified": true
+    },
+    {
+      "signature": "phaser3_api:setTintFill (use setTint + setTintMode in Phaser 4)",
+      "occurrences": 1,
+      "last_seen": "2026-05-15T00:00:00.000Z",
+      "root_cause": "setTintFill was removed in Phaser 4. The replacement is setTint(color) + setTintMode(Phaser.Display.TintMode.FILL).",
+      "fix_template": "Replace .setTintFill(0xRRGGBB) with .setTint(0xRRGGBB).setTintMode(1).",
+      "auto_patch": {
+        "type": "regex_replace",
+        "pattern": "\\.setTintFill\\(([^)]+)\\)",
+        "replacement": ".setTint($1).setTintMode(1)"
+      },
+      "verified": true
+    },
+    {
+      "signature": "rtl_missing",
+      "occurrences": 1,
+      "last_seen": "2026-05-15T00:00:00.000Z",
+      "root_cause": "Arabic spec used raw scene.add.text(...) without rtl:true, breaking glyph shaping and direction.",
+      "fix_template": "Replace every scene.add.text(x,y,str,opts) with window.EduCore.addText(this, x, y, str, opts). EduCore.addText injects rtl:true automatically when language is 'ar'.",
+      "verified": true
+    },
+    {
+      "signature": "font_small:18",
+      "occurrences": 1,
+      "last_seen": "2026-05-15T00:00:00.000Z",
+      "root_cause": "Text style fontSize below the legal minimum (24px EN, 28px AR). Small text is illegible on phone screens for grades 7-12.",
+      "fix_template": "Raise every fontSize: '<n>px' to at least 24px (English) or 28px (Arabic). Use wordWrap to avoid overflow rather than shrinking text.",
+      "verified": true
+    },
+    {
+      "signature": "sprite_missing:role_player",
+      "occurrences": 1,
+      "last_seen": "2026-05-16T00:00:00.000Z",
+      "root_cause": "Generated code references EduSprites.library.player but the sprite manifest doesn't carry that role for the chosen theme. Either the manifest omitted it or the code typo'd the role.",
+      "fix_template": "Cross-check every EduSprites.library.<role> reference against the roles passed by the backend (see the SPRITE_ROLES comment block injected at the top of the script). Use only listed roles. If the role you need isn't there, fall back to drawing a Phaser.Graphics primitive.",
+      "verified": true
+    },
+    {
+      "signature": "sprite_size_exceeded",
+      "occurrences": 1,
+      "last_seen": "2026-05-16T00:00:00.000Z",
+      "root_cause": "A generated sprite base64 string is over 250KB; combined with the rest of the bundle this pushes the HTML over the 2MB response cap.",
+      "fix_template": "Drop the largest generated sprites from the manifest and let the code fall back to label-only answer panels. Future improvement: re-encode at lower JPEG quality before storing.",
+      "verified": false
+    },
+    {
+      "signature": "sprite_fallback_required",
+      "occurrences": 1,
+      "last_seen": "2026-05-16T00:00:00.000Z",
+      "root_cause": "Image generation provider returned no images for any concept in the game (provider down, rate-limited, or all generations failed safety check). Generated game still must render.",
+      "fix_template": "When EduSprites.generated[conceptId] is undefined, render the concept label as text inside the answer panel instead of an image. Don't crash; don't skip the question.",
+      "auto_patch": {
+        "type": "regex_replace",
+        "pattern": "EduSprites\\.generated\\[([^\\]]+)\\]\\s*\\|\\|\\s*null",
+        "replacement": "EduSprites.generated[$1] || EduSprites.library.answer_panel || null"
+      },
+      "verified": true
+    },
+    {
+      "signature": "external_resource:https://fonts.googleapis.com/css2",
+      "occurrences": 1,
+      "last_seen": "2026-05-15T00:00:00.000Z",
+      "root_cause": "Model added a Google Fonts <link> or @import. Banned: WebView may run offline and external fetches add latency and tracking. Arabic font is already inlined.",
+      "fix_template": "Delete any <link href=\"https://fonts...\"> tags and any CSS @import for fonts. Use the inlined 'NotoArabic' family or system-ui.",
+      "auto_patch": {
+        "type": "regex_replace",
+        "pattern": "<link[^>]+fonts\\.(googleapis|gstatic)\\.com[^>]*>",
+        "replacement": ""
+      },
+      "verified": true
+    },
+    {
+      "signature": "touch_small",
+      "occurrences": 2,
+      "last_seen": "2026-05-16T14:47:39.344Z",
+      "root_cause": "Auto-captured: Found shape 3x3 < 44px",
+      "fix_template": "SIGNATURE: touch_small\nUNKNOWN — diagnose and fix.\nDETAIL: Found shape 3x3 < 44px",
+      "verified": false
+    }
+  ]
+}

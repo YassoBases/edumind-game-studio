@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<!--
+  EduMind Archetype: goal_shootout
+  Pedagogical mechanic: target_practice (1 correct + 3 distractors per question).
+  Presentation: 4 goal targets across the top, player + ball at the bottom. Tap a goal
+  to "kick" the ball at the answer. Correct → goal celebration. Wrong → keeper saves it.
+-->
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>*{margin:0;padding:0;box-sizing:border-box;touch-action:none;}html,body{width:100%;height:100%;overflow:hidden;background:#0b1020;}#game-container{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;}canvas{display:block;}</style>
+</head>
+<body>
+<div id="game-container"></div>
+<script src="https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.min.js"></script>
+<script src="/client/EduCore.js"></script>
+<script>
+window.EduSprites = window.EduSprites || { library: {}, generated: {} };
+window.EduMindAPI = window.EduMindAPI || { reportScore:()=>{}, reportLevel:()=>{}, reportSummary:()=>{}, reportComplete:()=>{}, reportEvent:()=>{} };
+window.EduCore.setLanguage('en');
+
+const SPEC = {
+  templateId: 'target_practice', archetype: 'goal_shootout', themeId: 'football',
+  language: 'en', subject: 'Geography', topic: 'World capitals', theme: 'football',
+  orientation: 'portrait',
+  concepts: [
+    { id: 'europe', label: 'European capitals', description: '' },
+    { id: 'asia', label: 'Asian capitals', description: '' },
+    { id: 'africa', label: 'African capitals', description: '' },
+    { id: 'americas', label: 'Americas capitals', description: '' },
+  ],
+  levels: Array.from({ length: 5 }, (_, i) => ({
+    index: i + 1, name: 'Match ' + (i + 1), timeLimitSeconds: 70 - i * 8, hintsAvailable: Math.max(1, 3 - Math.floor(i / 2)),
+    contentItems: [
+      { id: 'g' + i + 'a', prompt: 'Capital of France', answer: 'Paris', distractors: ['Lyon','Marseille','Nice'], concepts: ['europe'], difficulty: 0.1 + i * 0.15, explanationOnWrong: 'Paris is the capital of France.' },
+      { id: 'g' + i + 'b', prompt: 'Capital of Japan', answer: 'Tokyo', distractors: ['Osaka','Kyoto','Sapporo'], concepts: ['asia'], difficulty: 0.2 + i * 0.15, explanationOnWrong: 'Tokyo has been Japan\'s capital since 1868.' },
+      { id: 'g' + i + 'c', prompt: 'Capital of Egypt', answer: 'Cairo', distractors: ['Alexandria','Giza','Luxor'], concepts: ['africa'], difficulty: 0.3 + i * 0.15, explanationOnWrong: 'Cairo is Egypt\'s capital.' },
+      { id: 'g' + i + 'd', prompt: 'Capital of Brazil', answer: 'Brasília', distractors: ['Rio','São Paulo','Salvador'], concepts: ['americas'], difficulty: 0.35 + i * 0.13, explanationOnWrong: 'Brasília has been the capital since 1960.' },
+    ],
+    passingScore: 0.6,
+  })),
+  feedback: { correctPool:['Goal!','Top bins','Back of the net'], wrongPool:['Saved!','Off-target','Hit the post'], levelComplete:['Half-time','Second half'] },
+  visualStyle: { palette: ['#0b1020','#166534','#16a34a','#fbbf24'], accent: '#fbbf24' },
+  audioCues: ['correct','wrong','levelUp','win','lose'],
+};
+
+const engine = window.EduCore.AdaptiveEngine.create(SPEC);
+const W = 720, H = 1280;
+const GOAL_Y = 260;
+const PLAYER_Y = H * 0.85;
+const MenuScene = window.EduCore.buildMenuScene(SPEC);
+
+class GameScene extends Phaser.Scene {
+  constructor() { super('GameScene'); }
+  preload() {
+    window.EduCore.preloadSprites(this, ['player','goalkeeper','ball','goal_frame','field','crowd','answer_panel']);
+    window.EduCore.preloadGeneratedConcepts(this, SPEC.concepts.map(c => c.id));
+  }
+  create() {
+    this.cameras.main.setBackgroundColor('#166534');
+    this.buildBackground();
+    this.score = window.EduCore.makeScoreHud(this, 24, 24);
+    this.timer = window.EduCore.makeTimerHud(this, W - 24, 24, SPEC.levels[0].timeLimitSeconds, () => this.endLevel());
+    this.levelHud = window.EduCore.makeLevelHud(this, W / 2, 24, 1, 5);
+    this.hearts = window.EduCore.makeHeartsHud(this, 80, 90, 3);
+    this.buildPlayer();
+    this.startLevel(1);
+  }
+  buildBackground() {
+    if (this.textures.exists('lib:crowd')) {
+      this.add.image(W / 2, 60, 'lib:crowd').setDisplaySize(W, 100);
+    } else {
+      this.add.rectangle(W / 2, 60, W, 100, 0x1c1917);
+    }
+    if (this.textures.exists('lib:field')) {
+      this.add.image(W / 2, H - 200, 'lib:field').setDisplaySize(W, 320);
+    }
+  }
+  buildPlayer() {
+    if (this.textures.exists('lib:player')) {
+      this.player = this.add.image(W / 2, PLAYER_Y, 'lib:player').setDisplaySize(80, 120);
+    } else {
+      this.player = this.add.rectangle(W / 2, PLAYER_Y, 80, 120, 0xfbbf24);
+    }
+    if (this.textures.exists('lib:ball')) {
+      this.ball = this.add.image(W / 2, PLAYER_Y - 60, 'lib:ball').setDisplaySize(50, 50);
+    } else {
+      this.ball = this.add.circle(W / 2, PLAYER_Y - 60, 24, 0xffffff).setStrokeStyle(2, 0x0a0a0a);
+    }
+    this.ball.setDepth(40);
+    if (this.textures.exists('lib:goalkeeper')) {
+      this.keeper = this.add.image(W / 2, GOAL_Y + 40, 'lib:goalkeeper').setDisplaySize(80, 100);
+    } else {
+      this.keeper = this.add.rectangle(W / 2, GOAL_Y + 40, 80, 100, 0xfbbf24);
+    }
+    this.keeper.setDepth(35);
+  }
+  startLevel(idx) {
+    if (this.goals) this.goals.forEach(g => { g.bg.destroy(); if (g.icon) g.icon.destroy(); g.txt.destroy(); });
+    this.currentLevel = idx;
+    const lvl = SPEC.levels[idx - 1];
+    this.levelHud.set(idx, 5);
+    this.timer.reset(lvl.timeLimitSeconds); this.timer.start();
+    this.attempts = 0; this.correct = 0; this.hintsUsed = 0; this.correctIds = [];
+    this.queue = lvl.contentItems.slice();
+    this.nextQuestion();
+  }
+  nextQuestion() {
+    if (this.goals) this.goals.forEach(g => { g.bg.destroy(); if (g.icon) g.icon.destroy(); g.txt.destroy(); });
+    if (this.promptText) this.promptText.destroy();
+    if (this.queue.length === 0) { this.endLevel(); return; }
+    const item = this.queue.shift();
+    this.currentItem = item;
+    this.promptText = window.EduCore.addText(this, W / 2, 160, item.prompt, { size: '26px', origin: [0.5, 0.5], wordWrap: { width: W - 80 }, color: '#ffffff' });
+    this.promptText.setDepth(20);
+    const opts = Phaser.Utils.Array.Shuffle([item.answer, ...(item.distractors || []).slice(0, 3)]);
+    const cols = 4;
+    const colW = (W - 80) / cols;
+    this.goals = opts.map((opt, i) => {
+      const x = 40 + colW / 2 + i * colW;
+      const bg = this.textures.exists('lib:answer_panel')
+        ? this.add.image(x, GOAL_Y, 'lib:answer_panel').setDisplaySize(colW - 20, 110).setInteractive({ useHandCursor: true })
+        : this.add.rectangle(x, GOAL_Y, colW - 20, 110, 0x1f2937, 0.92).setStrokeStyle(3, 0xfbbf24).setInteractive({ useHandCursor: true });
+      bg.setDepth(20);
+      const conceptId = item.concepts[0];
+      let icon = null;
+      if (conceptId && this.textures.exists('gen:' + conceptId)) {
+        icon = this.add.image(x, GOAL_Y - 22, 'gen:' + conceptId).setDisplaySize(48, 48).setDepth(21);
+      }
+      const txt = window.EduCore.addText(this, x, GOAL_Y + (icon ? 28 : 0), opt, { size: '20px', origin: [0.5, 0.5], wordWrap: { width: colW - 30 } });
+      txt.setDepth(22);
+      bg.on('pointerup', () => this.kickAt(x, opt));
+      return { bg, icon, txt, x, isCorrect: opt === item.answer };
+    });
+  }
+  kickAt(targetX, opt) {
+    if (this.locked) return;
+    this.locked = true;
+    // Move ball; keeper dives slightly
+    const correct = opt === this.currentItem.answer;
+    const keeperDx = (targetX - W / 2) * (correct ? 0.45 : 0.95);
+    this.tweens.add({ targets: this.keeper, x: W / 2 + keeperDx, duration: 380, ease: 'sine.out' });
+    this.tweens.add({
+      targets: this.ball,
+      x: targetX,
+      y: GOAL_Y,
+      duration: 480,
+      ease: 'sine.in',
+      onComplete: () => {
+        this.attempts += 1;
+        if (correct) {
+          this.correct += 1; this.correctIds.push(this.currentItem.id);
+          this.score.add(10);
+          window.EduCore.showCorrect(this, W / 2, H * 0.45, 10);
+        } else {
+          this.hearts.lose();
+          window.EduCore.showWrong(this, W / 2, H * 0.45, this.currentItem.explanationOnWrong);
+        }
+        this.time.delayedCall(700, () => {
+          this.ball.setPosition(W / 2, PLAYER_Y - 60);
+          this.keeper.setPosition(W / 2, GOAL_Y + 40);
+          this.locked = false;
+          this.nextQuestion();
+        });
+      },
+    });
+  }
+  endLevel() {
+    if (this.endingLevel) return;
+    this.endingLevel = true;
+    this.timer.stop();
+    const lvl = SPEC.levels[this.currentLevel - 1];
+    const timeUsedMs = (lvl.timeLimitSeconds - this.timer.remaining()) * 1000;
+    const res = engine.completeLevel({
+      correct: this.correct, attempts: this.attempts,
+      timeUsedMs, timeLimitMs: lvl.timeLimitSeconds * 1000,
+      hintsUsed: this.hintsUsed, maxHints: lvl.hintsAvailable,
+      attemptedItems: lvl.contentItems, correctItems: this.correctIds,
+    });
+    window.EduMindAPI.reportLevel(this.currentLevel, res.score, res.accuracy, res.durationMs);
+    const delta = res.nextLevel - this.currentLevel;
+    window.EduCore.showLevelComplete(this, { score: res.score, accuracy: res.accuracy, delta }, () => {
+      this.endingLevel = false;
+      if (res.stopReason) { this.finish(); return; }
+      this.startLevel(res.nextLevel);
+    });
+  }
+  finish() {
+    const summary = engine.buildSummary();
+    window.EduMindAPI.reportSummary(summary);
+    window.EduMindAPI.reportComplete(summary.totalScore, summary.masteryAchieved, summary.durationSeconds);
+    this.scene.start('EndScene');
+  }
+}
+class EndScene extends (window.EduCore.buildEndScene(() => engine.buildSummary(), () => location.reload(), () => window.EduMindAPI.reportEvent('exit', {}))) {}
+
+new Phaser.Game({ type: Phaser.AUTO, parent: 'game-container', width: W, height: H, backgroundColor: '#0b1020', scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH }, scene: [MenuScene, GameScene, EndScene] });
+</script>
+</body>
+</html>
