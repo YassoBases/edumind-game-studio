@@ -2,7 +2,10 @@
 // when dart:html is available.
 import 'package:flutter/material.dart';
 
-void registerGameIframe(String gameId, String html) {/* no-op on native */}
+typedef IframeStatusCallback = void Function(String label);
+void registerStatusCallback(IframeStatusCallback cb) {/* no-op on native */}
+void registerGameIframe(String gameId, String backendUrl) {/* no-op */}
+void openInNewTab(String backendUrl, String gameId) {/* no-op */}
 
 Widget buildGameIframe(String gameId) =>
     const ColoredBox(color: Colors.black, child: SizedBox.expand());

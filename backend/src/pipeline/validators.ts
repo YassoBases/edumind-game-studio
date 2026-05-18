@@ -121,18 +121,26 @@ function v_concepts_tagged(ctx: ValidatorContext): ValidatorResult {
 }
 
 function v_touch_target_size(ctx: ValidatorContext): ValidatorResult {
-  // Find every Phaser shape with explicit width/height and reject anything < 44 logical px.
-  const matches = ctx.innerScript.matchAll(/add\.(?:rectangle|circle)\(\s*[^,)]+,\s*[^,)]+,\s*([0-9.]+)(?:\s*,\s*([0-9.]+))?/g);
+  // Only flag shapes that are INTERACTIVE. Decorative shapes (progress bar fill, particles,
+  // background dots, etc.) can be any size. We detect interactivity by finding the
+  // `.setInteractive(` call on the same statement as the `add.rectangle|circle` call.
+  const re = /add\.(?:rectangle|circle)\(\s*[^,)]+,\s*[^,)]+,\s*([0-9.]+)(?:\s*,\s*([0-9.]+))?[^)]*\)[^;\n]*\.setInteractive\(/g;
+  const matches = ctx.innerScript.matchAll(re);
   for (const m of matches) {
     const w = Number(m[1]);
-    const h = m[2] ? Number(m[2]) : w; // circle: single arg = radius; treat radius*2 as size
-    const effW = m[2] ? w : w * 2;
+    const h = m[2] ? Number(m[2]) : w;
+    const effW = m[2] ? w : w * 2; // circle: arg is radius → diameter is 2r
     const effH = m[2] ? h : w * 2;
-    // Only flag interactive elements. We can't infer interactivity here reliably; flag any < 44.
-    if (effW < 44 || effH < 44)
-      return { name: 'touch_target_size', ok: false, signature: 'touch_small', detail: `Found shape ${effW}x${effH} < 44px` };
+    if (effW < 44 || effH < 44) {
+      return {
+        name: 'touch_target_size',
+        ok: false,
+        signature: 'touch_small',
+        detail: `Interactive shape ${effW}x${effH} below 44px`,
+      };
+    }
   }
-  return { name: 'touch_target_size', ok: true, signature: 'touch:ok', detail: 'all shapes ≥44px' };
+  return { name: 'touch_target_size', ok: true, signature: 'touch:ok', detail: 'all interactive shapes ≥44px' };
 }
 
 function v_no_keyboard_input(ctx: ValidatorContext): ValidatorResult {

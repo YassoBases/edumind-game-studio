@@ -32,11 +32,62 @@ class _ComposerScreenState extends State<ComposerScreen> {
   // Streaming state
   StreamSubscription<ComposeStreamEvent>? _sub;
   final List<StageProgressEvent> _stageLog = [];
+  final List<String> _debugLog = []; // human-readable trace shown in UI
   int _runningCostMicroUsd = 0;
   String _currentLabel = '';
   double _progressFraction = 0;
   String? _clarifyingQuestion;
   Map<String, dynamic>? _normalized;
+
+  void _trace(String msg) {
+    debugPrint('[Composer] $msg');
+    if (!mounted) return;
+    setState(() {
+      _debugLog.add(msg);
+      if (_debugLog.length > 20) _debugLog.removeAt(0);
+    });
+  }
+
+  /// Translates raw API error JSON / Dart exception messages into a user-friendly string.
+  /// Returns the friendly headline and an optional short hint.
+  ({String title, String? hint}) _humanizeError(String raw) {
+    final isAr = widget.arabic;
+    final r = raw.toLowerCase();
+    if (r.contains('overloaded') || r.contains('overloaded_error')) {
+      return (
+        title: isAr
+            ? 'الخدمة مزدحمة الآن. حاول مجددًا بعد لحظات.'
+            : 'Anthropic is at capacity right now. Give it a few seconds and try again.',
+        hint: isAr ? 'مشكلة مؤقتة في المزود، ليست في طلبك.' : 'Transient upstream issue, not your prompt.',
+      );
+    }
+    if (r.contains('rate_limit') || r.contains('429')) {
+      return (
+        title: isAr ? 'تجاوزت حد الطلبات. انتظر دقيقة ثم حاول.' : 'Rate limit hit. Wait a minute and try again.',
+        hint: null,
+      );
+    }
+    if (r.contains('credit') || r.contains('balance')) {
+      return (
+        title: isAr ? 'رصيد API منخفض. أضف رصيدًا للمتابعة.' : 'API balance is too low. Top up to continue.',
+        hint: null,
+      );
+    }
+    if (r.contains('safety_flagged')) {
+      return (
+        title: isAr ? 'لم تجتز الفكرة فحص الأمان. جرب فكرة مختلفة.' : 'That idea didn\'t pass safety check. Try a different one.',
+        hint: null,
+      );
+    }
+    if (r.contains('xhr error') || r.contains('failed to fetch') || r.contains('connection')) {
+      return (
+        title: isAr ? 'تعذر الاتصال بالخادم.' : 'Can\'t reach the server.',
+        hint: isAr ? 'تأكد من تشغيل الخادم على المنفذ 8080.' : 'Make sure the backend is running on :8080.',
+      );
+    }
+    // Fall through: show first 160 chars of the raw error.
+    return (title: raw.length > 160 ? '${raw.substring(0, 160)}…' : raw, hint: null);
+  }
 
   static const _stageOrder = [
     'normalize', 'moderation_pre', 'spec', 'sprites', 'code', 'validators',
@@ -99,6 +150,7 @@ class _ComposerScreenState extends State<ComposerScreen> {
     setState(() {
       _step = _Step.generating;
       _stageLog.clear();
+      _debugLog.clear();
       _runningCostMicroUsd = 0;
       _currentLabel = widget.arabic ? 'بدء...' : 'Starting...';
       _progressFraction = 0;
@@ -109,21 +161,29 @@ class _ComposerScreenState extends State<ComposerScreen> {
     if (_sessionLength != null) prefs['sessionLength'] = _sessionLength;
     if (_grade != null) prefs['grade'] = _grade;
     if (_focusArea != null && _focusArea!.trim().isNotEmpty) prefs['focusArea'] = _focusArea;
+    _trace('opening compose stream');
     _sub = widget.api
         .composeStream(
           rawPrompt: _promptCtrl.text.trim(),
           language: widget.arabic ? 'ar' : 'en',
           preferences: prefs.isEmpty ? null : prefs,
+          onLog: (m) => _trace('sse: $m'),
         )
-        .listen(_handleEvent, onError: (e) {
-      if (!mounted) return;
-      setState(() => _error = e.toString());
-    });
+        .listen(
+          _handleEvent,
+          onError: (e) {
+            _trace('stream ERROR $e');
+            if (!mounted) return;
+            setState(() => _error = e.toString());
+          },
+          onDone: () => _trace('stream done'),
+        );
   }
 
   void _handleEvent(ComposeStreamEvent ev) {
     if (!mounted) return;
     if (ev is StageProgressEvent) {
+      _trace('stage ${ev.status} ${ev.stage} • ${ev.label} • ${(ev.costMicroUsd / 1000).toStringAsFixed(2)}m¢');
       setState(() {
         _stageLog.add(ev);
         _runningCostMicroUsd = ev.costMicroUsd;
@@ -134,12 +194,14 @@ class _ComposerScreenState extends State<ComposerScreen> {
         }
       });
     } else if (ev is ComposeClarifyEvent) {
+      _trace('clarify: ${ev.clarifyingQuestion}');
       setState(() {
         _clarifyingQuestion = ev.clarifyingQuestion;
         _normalized = ev.normalized;
         _step = _Step.prompt;
       });
     } else if (ev is ComposeDoneEvent) {
+      _trace('DONE game=${ev.game.gameId} cost=${(ev.totalCostMicroUsd / 1000).toStringAsFixed(2)}m¢');
       setState(() {
         _runningCostMicroUsd = ev.totalCostMicroUsd;
         _progressFraction = 1;
@@ -148,6 +210,7 @@ class _ComposerScreenState extends State<ComposerScreen> {
         MaterialPageRoute(builder: (_) => GamePlayerScreen(api: widget.api, game: ev.game)),
       );
     } else if (ev is ComposeErrorEvent) {
+      _trace('ERROR: ${ev.message}');
       setState(() {
         _error = ev.message;
         _step = _Step.preferences;
@@ -240,14 +303,17 @@ class _ComposerScreenState extends State<ComposerScreen> {
                       style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 4),
                   Text(_clarifyingQuestion!, style: const TextStyle(color: Colors.white)),
+                  if (_normalized != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'best guess → ${_normalized!['archetype']} / ${_normalized!['theme']}',
+                      style: TextStyle(color: Colors.white.withOpacity(0.75), fontSize: 11),
+                    ),
+                  ],
                 ],
               ),
             ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(_error!, style: const TextStyle(color: EduTheme.danger)),
-            ),
+          if (_error != null) _errorCard(_error!, ar),
           const SizedBox(height: 28),
           FilledButton(
             onPressed: _promptCtrl.text.trim().isEmpty ? null : _advance,
@@ -337,18 +403,70 @@ class _ComposerScreenState extends State<ComposerScreen> {
               onChanged: (v) => _focusArea = v,
             ),
           ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(_error!, style: const TextStyle(color: EduTheme.danger)),
-            ),
+          if (_error != null) _errorCard(_error!, ar),
           const SizedBox(height: 28),
           FilledButton(
             onPressed: _advance,
-            child: Text(ar ? 'أنشئ اللعبة' : 'Generate game'),
+            child: Text(_error == null
+                ? (ar ? 'أنشئ اللعبة' : 'Generate game')
+                : (ar ? 'حاول مرة أخرى' : 'Try again')),
           ),
         ],
       );
+
+  Widget _errorCard(String raw, bool ar) {
+    final humanized = _humanizeError(raw);
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: GlassCard(
+        gradientBorder: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [EduTheme.danger, EduTheme.accentAmber],
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.error_outline_rounded, color: EduTheme.danger, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    humanized.title,
+                    style: const TextStyle(
+                        color: EduTheme.textPrimary, fontWeight: FontWeight.w800, fontSize: 14),
+                  ),
+                ),
+              ],
+            ),
+            if (humanized.hint != null) ...[
+              const SizedBox(height: 6),
+              Text(humanized.hint!,
+                  style: const TextStyle(color: EduTheme.textMuted, fontSize: 12)),
+            ],
+            const SizedBox(height: 6),
+            Text(
+              ar ? 'التفاصيل التقنية:' : 'Technical detail:',
+              style: const TextStyle(color: EduTheme.textMuted, fontSize: 10, letterSpacing: 0.8),
+            ),
+            const SizedBox(height: 2),
+            SelectableText(
+              raw,
+              style: const TextStyle(
+                color: EduTheme.textMuted,
+                fontSize: 10,
+                fontFamily: 'monospace',
+                height: 1.3,
+              ),
+              maxLines: 4,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildGeneratingStep(bool ar) {
     return ListView(
@@ -412,6 +530,24 @@ class _ComposerScreenState extends State<ComposerScreen> {
         ..._stageLog.where((e) => e.status == 'end').toList().reversed.take(8).map(
               (e) => _stageRow(e),
             ),
+        if (_debugLog.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          Text(ar ? 'سجل التصحيح' : 'Debug log',
+              style: const TextStyle(color: EduTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+          const SizedBox(height: 6),
+          GlassCard(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: SelectableText(
+              _debugLog.reversed.join('\n'),
+              style: const TextStyle(
+                color: EduTheme.textSecondary,
+                fontSize: 11,
+                fontFamily: 'monospace',
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }

@@ -23,6 +23,8 @@ class GamePlayerScreen extends StatefulWidget {
 class _GamePlayerScreenState extends State<GamePlayerScreen> {
   WebViewController? _controller;
   Map<String, dynamic>? _summaryPayload;
+  bool _shouldPop = false;
+  String _iframeStatus = 'initializing';
 
   @override
   void initState() {
@@ -36,8 +38,14 @@ class _GamePlayerScreenState extends State<GamePlayerScreen> {
         ..addJavaScriptChannel('EduMind', onMessageReceived: _onBridge)
         ..loadHtmlString(widget.game.html);
     } else {
-      // Register a unique iframe view for this game.
-      web.registerGameIframe(widget.game.gameId, widget.game.html);
+      // Stream iframe lifecycle into the visible diagnostic strip.
+      web.registerStatusCallback((msg) {
+        if (!mounted) return;
+        setState(() => _iframeStatus = msg);
+      });
+      // Point the iframe at the backend's /play endpoint so we get a real navigable URL
+      // (way more reliable than srcdoc for large HTML).
+      web.registerGameIframe(widget.game.gameId, widget.api.baseUrl);
     }
   }
 
@@ -115,25 +123,66 @@ class _GamePlayerScreenState extends State<GamePlayerScreen> {
     super.dispose();
   }
 
+  Future<void> _attemptExit() async {
+    if (await _confirmExit() && mounted) {
+      setState(() => _shouldPop = true);
+      // Allow PopScope to release the route now that the user confirmed.
+      Navigator.of(context).pop();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false,
+      canPop: _shouldPop,
       onPopInvoked: (didPop) async {
         if (didPop) return;
-        if (await _confirmExit() && mounted) Navigator.of(context).pop();
+        await _attemptExit();
       },
       child: Scaffold(
         backgroundColor: Colors.black,
         appBar: AppBar(
           backgroundColor: Colors.black,
           iconTheme: const IconThemeData(color: Colors.white),
+          leading: IconButton(
+            icon: const Icon(Icons.close_rounded),
+            onPressed: _attemptExit,
+          ),
           title: Text(widget.game.gameId, style: const TextStyle(color: Colors.white, fontSize: 13)),
+          actions: [
+            if (kIsWeb)
+              TextButton.icon(
+                onPressed: () => web.openInNewTab(widget.api.baseUrl, widget.game.gameId),
+                icon: const Icon(Icons.open_in_new_rounded, color: Colors.white, size: 18),
+                label: const Text('Open in new tab', style: TextStyle(color: Colors.white, fontSize: 12)),
+              ),
+          ],
         ),
-        body: SafeArea(
-          child: kIsWeb
-              ? web.buildGameIframe(widget.game.gameId)
-              : WebViewWidget(controller: _controller!),
+        body: Column(
+          children: [
+            if (kIsWeb)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                color: const Color(0xFF1A2347),
+                child: Text(
+                  'iframe: $_iframeStatus',
+                  style: const TextStyle(color: Color(0xFFB4BCD8), fontSize: 11, fontFamily: 'monospace'),
+                ),
+              ),
+            Expanded(
+              child: SafeArea(
+                top: false,
+                // Force the iframe / WebView to take the entire remaining body space. Without
+                // an explicit size, HtmlElementView's platform slot collapses to 0x0 on web.
+                child: SizedBox.expand(
+                  child: kIsWeb
+                      ? web.buildGameIframe(widget.game.gameId)
+                      : WebViewWidget(controller: _controller!),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

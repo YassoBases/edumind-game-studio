@@ -126,19 +126,31 @@ export async function gamesRoutes(app: FastifyInstance): Promise<void> {
     const studentId = getStudentId(req);
     const body = ComposeBody.parse(req.body ?? {});
 
-    reply.raw.writeHead(200, {
-      'content-type': 'text/event-stream',
+    // Hijack the response so Fastify stops managing the lifecycle. Without this, Fastify
+    // may delay sending bytes until reply is "done".
+    reply.hijack();
+    const raw = reply.raw;
+    // Defeat Nagle's algorithm — flush each small SSE frame immediately.
+    raw.socket?.setNoDelay(true);
+    raw.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
-      'connection': 'keep-alive',
+      connection: 'keep-alive',
       'x-accel-buffering': 'no',
+      'access-control-allow-origin': '*',
+      'access-control-allow-credentials': 'true',
     });
+    raw.flushHeaders?.();
+    let frameSeq = 0;
     const send = (event: string, data: unknown) => {
-      reply.raw.write(`event: ${event}\n`);
-      reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
+      frameSeq += 1;
+      const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+      raw.write(payload);
+      logger.info({ seq: frameSeq, event, bytes: payload.length }, 'sse.frame');
     };
     // Heartbeat — many proxies will close streams that go silent for ~60s.
     const heartbeat = setInterval(() => {
-      try { reply.raw.write(': keepalive\n\n'); } catch { /* ignore */ }
+      try { raw.write(': keepalive\n\n'); } catch { /* ignore */ }
     }, 15_000);
 
     try {
@@ -156,7 +168,7 @@ export async function gamesRoutes(app: FastifyInstance): Promise<void> {
       });
       if (normalized.safetyFlags.length > 0) {
         send('error', { reason: 'safety_flagged', flags: normalized.safetyFlags });
-        reply.raw.end();
+        raw.end();
         return;
       }
       if (normalized.confidence < 0.6) {
@@ -166,7 +178,7 @@ export async function gamesRoutes(app: FastifyInstance): Promise<void> {
           suggestedTheme: normalized.theme,
           normalized,
         });
-        reply.raw.end();
+        raw.end();
         return;
       }
 
@@ -231,7 +243,7 @@ export async function gamesRoutes(app: FastifyInstance): Promise<void> {
       send('error', { message: err instanceof Error ? err.message : String(err) });
     } finally {
       clearInterval(heartbeat);
-      reply.raw.end();
+      raw.end();
     }
   });
 
@@ -436,6 +448,20 @@ export async function gamesRoutes(app: FastifyInstance): Promise<void> {
       enrichment: s.enrichment,
       enrichmentReady: s.enrichmentReady,
     });
+  });
+
+  // Serve the stored HTML as a real, navigable URL. Used by the Flutter web player which
+  // points its iframe at this endpoint (more reliable than srcdoc) and by direct-link tests.
+  app.get('/:id/play', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const game = await prisma.game.findUnique({ where: { id } });
+    if (!game) return reply.status(404).send({ error: 'not_found' });
+    reply
+      .header('content-type', 'text/html; charset=utf-8')
+      .header('cache-control', 'private, max-age=300')
+      .header('x-frame-options', 'SAMEORIGIN')
+      .header('access-control-allow-origin', '*');
+    return reply.send(game.html);
   });
 
   app.get('/library', async (req, reply) => {

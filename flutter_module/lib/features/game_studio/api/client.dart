@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/game_spec.dart';
 import '../models/summary.dart';
+import 'sse_native.dart' if (dart.library.html) 'sse_web.dart' as sse;
 
 class ComposeResult {
   final bool needsClarification;
@@ -70,47 +71,34 @@ class GameStudioApi {
       };
 
   /// SSE compose stream: yields progress + running cost events, then a terminal done/error/clarify.
+  /// Transport is platform-specific (native = package:http chunked; web = browser XHR
+  /// onProgress so events arrive as written, not buffered until response close).
+  /// Transport-level diagnostics flow through [onLog] for surfacing in the UI.
   Stream<ComposeStreamEvent> composeStream({
     required String rawPrompt,
     required String language,
     Map<String, dynamic>? preferences,
+    void Function(String msg)? onLog,
   }) async* {
-    final uri = Uri.parse('$baseUrl/api/games/compose-stream');
+    final url = '$baseUrl/api/games/compose-stream';
     final body = jsonEncode({
       'rawPrompt': rawPrompt,
       'language': language,
       if (preferences != null) 'preferences': preferences,
     });
-    final req = http.Request('POST', uri)
-      ..headers.addAll({..._headers, 'accept': 'text/event-stream'})
-      ..body = body;
-    final res = await _client.send(req);
-    if (res.statusCode >= 400) {
-      yield ComposeErrorEvent('Compose stream failed: ${res.statusCode}');
-      return;
-    }
-    final lines = res.stream.transform(utf8.decoder).transform(const LineSplitter());
-    String? event;
-    final buf = StringBuffer();
-    await for (final line in lines) {
-      if (line.startsWith(':')) continue; // heartbeat
-      if (line.isEmpty) {
-        if (event != null && buf.isNotEmpty) {
-          try {
-            final data = jsonDecode(buf.toString()) as Map<String, dynamic>;
-            final parsed = _parseSseEvent(event, data);
-            if (parsed != null) yield parsed;
-            if (parsed is ComposeDoneEvent || parsed is ComposeErrorEvent || parsed is ComposeClarifyEvent) {
-              return;
-            }
-          } catch (_) {/* swallow malformed frame */}
+    try {
+      await for (final frame
+          in sse.openSse(url: url, headers: _headers, body: body, onLog: onLog)) {
+        final parsed = _parseSseEvent(frame.event, frame.data);
+        if (parsed != null) yield parsed;
+        if (parsed is ComposeDoneEvent ||
+            parsed is ComposeErrorEvent ||
+            parsed is ComposeClarifyEvent) {
+          return;
         }
-        event = null;
-        buf.clear();
-        continue;
       }
-      if (line.startsWith('event: ')) event = line.substring(7).trim();
-      else if (line.startsWith('data: ')) buf.write(line.substring(6));
+    } catch (e) {
+      yield ComposeErrorEvent(e.toString());
     }
   }
 

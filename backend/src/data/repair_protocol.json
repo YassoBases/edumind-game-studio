@@ -97,8 +97,8 @@
     },
     {
       "signature": "font_small:18",
-      "occurrences": 1,
-      "last_seen": "2026-05-15T00:00:00.000Z",
+      "occurrences": 3,
+      "last_seen": "2026-05-18T13:25:58.254Z",
       "root_cause": "Text style fontSize below the legal minimum (24px EN, 28px AR). Small text is illegible on phone screens for grades 7-12.",
       "fix_template": "Raise every fontSize: '<n>px' to at least 24px (English) or 28px (Arabic). Use wordWrap to avoid overflow rather than shrinking text.",
       "verified": true
@@ -147,10 +147,26 @@
     },
     {
       "signature": "touch_small",
-      "occurrences": 2,
-      "last_seen": "2026-05-16T14:47:39.344Z",
+      "occurrences": 4,
+      "last_seen": "2026-05-17T21:55:33.815Z",
       "root_cause": "Auto-captured: Found shape 3x3 < 44px",
       "fix_template": "SIGNATURE: touch_small\nUNKNOWN — diagnose and fix.\nDETAIL: Found shape 3x3 < 44px",
+      "verified": false
+    },
+    {
+      "signature": "font_small:20",
+      "occurrences": 1,
+      "last_seen": "2026-05-18T12:53:28.342Z",
+      "root_cause": "Auto-captured: fontSize 20px below 24px (language en)",
+      "fix_template": "SIGNATURE: font_small:20\nUNKNOWN — diagnose and fix.\nDETAIL: fontSize 20px below 24px (language en)",
+      "verified": false
+    },
+    {
+      "signature": "font_small:22",
+      "occurrences": 1,
+      "last_seen": "2026-05-18T13:25:55.539Z",
+      "root_cause": "Auto-captured: fontSize 22px below 24px (language en)",
+      "fix_template": "SIGNATURE: font_small:22\nUNKNOWN — diagnose and fix.\nDETAIL: fontSize 22px below 24px (language en)",
       "verified": false
     }
   ]

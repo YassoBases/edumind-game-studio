@@ -42,6 +42,21 @@ export function createAnthropicProvider(): GenerationProvider {
   const primary = env().EDUMIND_GENERATION_MODEL_PRIMARY;
   const fast = env().EDUMIND_GENERATION_MODEL_FAST;
 
+  // Backoff schedule for transient 529/overloaded/rate-limit errors from Anthropic.
+  // Anthropic's overloaded errors are typically resolved within 10–30 seconds.
+  const RETRY_DELAYS_MS = [2000, 5000, 12000, 25000];
+
+  function isRetryableAnthropicError(err: unknown): boolean {
+    const e = err as { status?: number; error?: { type?: string }; message?: string };
+    if (e.status === 529) return true;
+    if (e.status === 502 || e.status === 503 || e.status === 504) return true;
+    if (e.status === 429) return true;
+    if (e.error?.type === 'overloaded_error') return true;
+    if (e.error?.type === 'rate_limit_error') return true;
+    if (typeof e.message === 'string' && /overloaded|rate.?limit|temporarily/i.test(e.message)) return true;
+    return false;
+  }
+
   async function call(
     model: string,
     system: Array<{ type: 'text'; text: string; cache_control?: CacheControl }>,
@@ -49,30 +64,51 @@ export function createAnthropicProvider(): GenerationProvider {
     phase: GenerationPhase,
     maxTokens = 16000,
   ): Promise<{ text: string; usage: TokenUsage }> {
-    const t0 = Date.now();
-    // Use streaming for all calls — Anthropic's non-stream pre-flight rejects requests whose
-    // max_tokens could exceed a 10-minute wall clock. Streaming has no such limit.
-    const stream = client.messages.stream({
-      model,
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: 'user', content: userText }],
-    });
-    const finalMessage = await stream.finalMessage();
-    const latency = Date.now() - t0;
-    const usage: TokenUsage = {
-      inputTokens: finalMessage.usage.input_tokens,
-      outputTokens: finalMessage.usage.output_tokens,
-      cacheReadTokens: finalMessage.usage.cache_read_input_tokens ?? 0,
-      cacheWriteTokens: finalMessage.usage.cache_creation_input_tokens ?? 0,
-      model,
-    };
-    logLLMCall({ phase, latencyMs: latency, ...usage });
-    const text = finalMessage.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('');
-    return { text, usage };
+    let attempt = 0;
+    let lastErr: unknown = null;
+    while (attempt <= RETRY_DELAYS_MS.length) {
+      const t0 = Date.now();
+      try {
+        // Streaming on every call — Anthropic's non-stream pre-flight rejects requests
+        // whose max_tokens could exceed a 10-minute wall clock.
+        const stream = client.messages.stream({
+          model,
+          max_tokens: maxTokens,
+          system,
+          messages: [{ role: 'user', content: userText }],
+        });
+        const finalMessage = await stream.finalMessage();
+        const latency = Date.now() - t0;
+        const usage: TokenUsage = {
+          inputTokens: finalMessage.usage.input_tokens,
+          outputTokens: finalMessage.usage.output_tokens,
+          cacheReadTokens: finalMessage.usage.cache_read_input_tokens ?? 0,
+          cacheWriteTokens: finalMessage.usage.cache_creation_input_tokens ?? 0,
+          model,
+        };
+        logLLMCall({ phase, latencyMs: latency, ...usage });
+        const text = finalMessage.content
+          .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+          .map((b) => b.text)
+          .join('');
+        return { text, usage };
+      } catch (err) {
+        lastErr = err;
+        if (!isRetryableAnthropicError(err) || attempt >= RETRY_DELAYS_MS.length) {
+          throw err;
+        }
+        const delay = RETRY_DELAYS_MS[attempt] ?? 25000;
+        const status = (err as { status?: number }).status ?? '?';
+        const type = (err as { error?: { type?: string } }).error?.type ?? '?';
+        logger.warn(
+          { phase, model, attempt: attempt + 1, status, type, delayMs: delay },
+          'llm.retry',
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        attempt += 1;
+      }
+    }
+    throw lastErr ?? new Error('LLM call failed');
   }
 
   return {
