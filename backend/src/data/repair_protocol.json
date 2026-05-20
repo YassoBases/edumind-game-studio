@@ -97,10 +97,26 @@
     },
     {
       "signature": "font_small:18",
-      "occurrences": 3,
-      "last_seen": "2026-05-18T13:25:58.254Z",
+      "occurrences": 4,
+      "last_seen": "2026-05-19T15:28:47.556Z",
       "root_cause": "Text style fontSize below the legal minimum (24px EN, 28px AR). Small text is illegible on phone screens for grades 7-12.",
       "fix_template": "Raise every fontSize: '<n>px' to at least 24px (English) or 28px (Arabic). Use wordWrap to avoid overflow rather than shrinking text.",
+      "verified": true
+    },
+    {
+      "signature": "no_gamefeel_calls",
+      "occurrences": 1,
+      "last_seen": "2026-05-18T00:00:00.000Z",
+      "root_cause": "Generated code uses no GameFeel.* methods. The runtime ships a juice library — score popups, particle bursts, screen shake, audio variety, level transitions — and the model is required to use it.",
+      "fix_template": "Add at least 5 GameFeel calls across the game using ≥3 distinct methods. At minimum: GameFeel.levelStart at the start of each level, GameFeel.scorePopup on every correct answer, GameFeel.celebrate at the end of correct streaks, GameFeel.punish on wrong answers, GameFeel.levelEnd between levels. Audio: GameFeel.audio.correctChain(comboCount) instead of repeated correct beeps.",
+      "verified": true
+    },
+    {
+      "signature": "gamefeel_low:2:1",
+      "occurrences": 1,
+      "last_seen": "2026-05-18T00:00:00.000Z",
+      "root_cause": "The model called GameFeel methods but only a single method, two times. Need at least 5 calls and 3 distinct methods to satisfy the juice budget.",
+      "fix_template": "Diversify GameFeel usage: per-correct popup (scorePopup), per-wrong punish (punish), per-level intro/end (levelStart/levelEnd), audio variety per archetype (engineRev for racing, crowdCheer for sports, swordSlash for fantasy), and at least one screen-level effect per level (shake/flash/zoomPunch).",
       "verified": true
     },
     {
@@ -167,6 +183,14 @@
       "last_seen": "2026-05-18T13:25:55.539Z",
       "root_cause": "Auto-captured: fontSize 22px below 24px (language en)",
       "fix_template": "SIGNATURE: font_small:22\nUNKNOWN — diagnose and fix.\nDETAIL: fontSize 22px below 24px (language en)",
+      "verified": false
+    },
+    {
+      "signature": "font_small:19",
+      "occurrences": 1,
+      "last_seen": "2026-05-19T15:21:31.371Z",
+      "root_cause": "Auto-captured: fontSize 19px below 24px (language en)",
+      "fix_template": "SIGNATURE: font_small:19\nUNKNOWN — diagnose and fix.\nDETAIL: fontSize 19px below 24px (language en)",
       "verified": false
     }
   ]

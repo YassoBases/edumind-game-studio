@@ -1,10 +1,11 @@
 <!DOCTYPE html>
 <!--
   EduMind Archetype: tower_builder
-  Pedagogical mechanic: build_combine.
-  Presentation: a tower being built from stacked blocks. Each level presents a target compound /
-  formula / composition; player drags correct ingredient blocks onto the base, wrong blocks
-  appear cracked and crumble. Build to target height = level complete.
+  Mechanic: build_combine. Tap ingredient blocks to stack them on the base.
+  Multiset-equal answer check.
+  Sky background with drifting clouds parallax, construction site dust at base, falling
+  blocks with gravity acceleration + rotation + landing bounce, wind audio rising with
+  tower height, height meter on the side, NEW RECORD banner if level beats previous best.
 -->
 <html lang="en" dir="ltr">
 <head>
@@ -16,6 +17,7 @@
 <div id="game-container"></div>
 <script src="https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.min.js"></script>
 <script src="/client/EduCore.js"></script>
+<script src="/client/GameFeel.js"></script>
 <script>
 window.EduSprites = window.EduSprites || { library: {}, generated: {} };
 window.EduMindAPI = window.EduMindAPI || { reportScore:()=>{}, reportLevel:()=>{}, reportSummary:()=>{}, reportComplete:()=>{}, reportEvent:()=>{} };
@@ -41,6 +43,7 @@ const SPEC = {
   })),
   feedback: { correctPool:['Stacked!','Solid block','Climbing up'], wrongPool:['Crumbled','Try again','Wrong piece'], levelComplete:['Floor done','Next floor'] },
   visualStyle: { palette: ['#0b1020','#78716c','#fbbf24','#dc2626'], accent: '#fbbf24' },
+  visualMood: 'playful',
   audioCues: ['correct','wrong','levelUp','win','lose'],
 };
 
@@ -49,6 +52,7 @@ const W = 720, H = 1280;
 const TOWER_X = W / 2;
 const BASE_Y = H - 200;
 const BLOCK_H = 60;
+const LEVEL_TINTS = [0x0c4a6e, 0x0e3a5c, 0x162e4d, 0x1f2347, 0x2a1b3d];
 const MenuScene = window.EduCore.buildMenuScene(SPEC);
 
 function multisetEqual(a, b) {
@@ -64,96 +68,237 @@ class GameScene extends Phaser.Scene {
     window.EduCore.preloadGeneratedConcepts(this, SPEC.concepts.map(c => c.id));
   }
   create() {
-    if (this.textures.exists('lib:backdrop')) {
-      this.add.image(W / 2, H / 2, 'lib:backdrop').setDisplaySize(W, H);
-    } else {
-      this.cameras.main.setBackgroundColor('#0c4a6e');
+    this.combo = 1;
+    this.locked = false;
+    this.previousBest = 0; // height record across levels
+    this.windPitchOffset = 0;
+
+    // === LAYER 1: sky gradient ===
+    this.skyLayer = this.add.rectangle(W / 2, H / 2, W, H, LEVEL_TINTS[0]).setDepth(-30);
+
+    // === LAYER 2: distant drifting clouds (slow parallax) ===
+    this.cloudLayer = window.GameFeel.parallaxLayer(this, {
+      depth: -20,
+      speed: 18,
+      spacing: 220,
+      direction: 'right',
+      count: 6,
+      factory: (y) => {
+        const cx = -100 + Math.random() * (W + 200);
+        return this.add.ellipse(cx, 100 + Math.random() * 200, 120, 32, 0xffffff, 0.45);
+      },
+    });
+
+    // === LAYER 3: distant mountains (medium parallax) ===
+    for (let i = 0; i < 5; i += 1) {
+      this.add.triangle(
+        80 + i * 160, BASE_Y - 60,
+        0, 60, 80, -120, 160, 60,
+        0x1f2937, 0.7,
+      ).setDepth(-15);
     }
+
+    // === LAYER 4: foreground dust at base — ambient construction-site puff ===
+    this.dustTimer = this.time.addEvent({
+      delay: 1400, loop: true,
+      callback: () => {
+        const x = TOWER_X - 200 + Math.random() * 400;
+        window.GameFeel.burst(this, x, BASE_Y + 70, {
+          count: 6, speed: 60, life: 1200,
+          colors: [0xaca093, 0x78716c, 0xffffff],
+        });
+      },
+    });
+
+    // === Base / foundation ===
+    if (this.textures.exists('lib:base')) {
+      this.add.image(TOWER_X, BASE_Y + 40, 'lib:base').setDisplaySize(280, 80).setDepth(0);
+    } else {
+      this.add.rectangle(TOWER_X, BASE_Y + 40, 280, 80, 0x1c1917).setDepth(0);
+    }
+
+    // === Height meter on the right side ===
+    this.heightMeterBg = this.add.rectangle(W - 50, H / 2, 14, H - 240, 0x111827, 0.75).setDepth(5);
+    this.heightMeterFill = this.add.rectangle(W - 50, H - 120, 10, 0, 0xfbbf24, 0.85).setOrigin(0.5, 1).setDepth(6);
+    this.heightLabel = window.EduCore.addText(this, W - 50, H - 110, '0', {
+      size: '20px', color: '#fbbf24', origin: [0.5, 0],
+    });
+    this.heightLabel.setDepth(7);
+
+    // === Prompt band ===
+    this.add.rectangle(W / 2, 170, W - 60, 90, 0x000000, 0.55).setStrokeStyle(2, 0xfbbf24, 0.4).setDepth(20);
+    this.promptText = window.EduCore.addText(this, W / 2, 170, '', {
+      size: '26px', color: '#fbbf24', origin: [0.5, 0.5], wordWrap: { width: W - 100 },
+    });
+    this.promptText.setDepth(22);
+
+    // === HUDs ===
     this.score = window.EduCore.makeScoreHud(this, 24, 24);
     this.timer = window.EduCore.makeTimerHud(this, W - 24, 24, SPEC.levels[0].timeLimitSeconds, () => this.endLevel());
     this.levelHud = window.EduCore.makeLevelHud(this, W / 2, 24, 1, 5);
     this.hearts = window.EduCore.makeHeartsHud(this, 80, 90, 3);
-    // Base
-    if (this.textures.exists('lib:base')) {
-      this.add.image(TOWER_X, BASE_Y + 40, 'lib:base').setDisplaySize(280, 80);
-    } else {
-      this.add.rectangle(TOWER_X, BASE_Y + 40, 280, 80, 0x1c1917);
-    }
-    this.startLevel(1);
+
+    // === Wind ambient — starts gentle, pitch rises with height ===
+    this.startWind();
+
+    window.GameFeel.levelStart(this, 1, 'FLOOR 1 — FOUNDATION').then(() => this.startLevel(1));
+  }
+  startWind() {
+    this.windEvent = this.time.addEvent({
+      delay: 1500, loop: true,
+      callback: () => {
+        // Re-trigger the woosh — pitch will rise as the tower grows via filterHz tracking
+        window.GameFeel.audio.woosh();
+      },
+    });
   }
   startLevel(idx) {
-    if (this.stack) this.stack.forEach((s) => s.destroy());
+    if (this.stack) this.stack.forEach((s) => s.destroy && s.destroy());
     if (this.tray) this.tray.forEach((t) => { t.bg.destroy(); t.txt.destroy(); });
-    if (this.promptText) this.promptText.destroy();
+    if (this.controls) this.controls.forEach((c) => c.destroy());
     this.currentLevel = idx;
     const lvl = SPEC.levels[idx - 1];
     this.levelHud.set(idx, 5);
     this.timer.reset(lvl.timeLimitSeconds); this.timer.start();
     this.attempts = 0; this.correct = 0; this.hintsUsed = 0; this.correctIds = [];
     this.queue = lvl.contentItems.slice();
+    this.skyLayer.setFillStyle(LEVEL_TINTS[idx - 1] || LEVEL_TINTS[4]);
     this.nextItem();
   }
   nextItem() {
-    if (this.stack) this.stack.forEach((s) => s.destroy());
+    if (this.stack) this.stack.forEach((s) => s.destroy && s.destroy());
     if (this.tray) this.tray.forEach((t) => { t.bg.destroy(); t.txt.destroy(); });
-    if (this.promptText) this.promptText.destroy();
+    if (this.controls) this.controls.forEach((c) => c.destroy());
     if (this.queue.length === 0) { this.endLevel(); return; }
     const item = this.queue.shift();
     this.currentItem = item;
     this.placed = [];
     this.stack = [];
-    this.promptText = window.EduCore.addText(this, W / 2, 170, item.prompt, { size: '26px', origin: [0.5, 0.5], wordWrap: { width: W - 80 } });
+    this.promptText.setText(item.prompt);
+    window.GameFeel.bounceIn(this.promptText, 0.5, 280);
+
     const pool = Phaser.Utils.Array.Shuffle([...(item.answer || []), ...(item.distractors || [])]);
     const trayY = H - 90;
     this.tray = pool.map((sym, i) => {
       const x = 90 + (i % 5) * 130;
       const bg = this.textures.exists('lib:block')
         ? this.add.image(x, trayY, 'lib:block').setDisplaySize(110, 70).setInteractive({ useHandCursor: true })
-        : this.add.rectangle(x, trayY, 110, 70, 0x78716c).setStrokeStyle(2, 0x0a0a0a).setInteractive({ useHandCursor: true });
-      const txt = window.EduCore.addText(this, x, trayY, sym, { size: '24px', color: '#ffffff', origin: [0.5, 0.5] });
+        : this.add.rectangle(x, trayY, 110, 70, 0x78716c).setStrokeStyle(2, 0xfbbf24).setInteractive({ useHandCursor: true });
+      bg.setDepth(50);
+      const txt = window.EduCore.addText(this, x, trayY, sym, { size: '26px', color: '#ffffff', origin: [0.5, 0.5] });
+      txt.setDepth(51);
       bg.on('pointerup', () => this.placeOnTower(sym, bg, txt));
+      window.GameFeel.bounceIn(bg, 0.5, 220);
       return { bg, txt, sym };
     });
-    // Confirm + reset
-    const confirm = this.add.rectangle(W / 2 - 130, H - 180, 220, 70, 0x4ade80).setInteractive({ useHandCursor: true });
-    const confirmTxt = window.EduCore.addText(this, W / 2 - 130, H - 180, window.EduCore.t('next'), { size: '24px', color: '#0a0a0a', origin: [0.5, 0.5] });
+    const confirm = this.add.rectangle(W / 2 - 130, H - 210, 220, 70, 0x4ade80).setInteractive({ useHandCursor: true }).setDepth(50);
+    const confirmTxt = window.EduCore.addText(this, W / 2 - 130, H - 210, window.EduCore.t('next'), { size: '24px', color: '#0a0a0a', origin: [0.5, 0.5] });
+    confirmTxt.setDepth(51);
     confirm.on('pointerup', () => this.check());
-    const reset = this.add.rectangle(W / 2 + 130, H - 180, 220, 70, 0x374151).setInteractive({ useHandCursor: true });
-    const resetTxt = window.EduCore.addText(this, W / 2 + 130, H - 180, window.EduCore.t('retry'), { size: '24px', color: '#ffffff', origin: [0.5, 0.5] });
+    const reset = this.add.rectangle(W / 2 + 130, H - 210, 220, 70, 0x374151).setInteractive({ useHandCursor: true }).setDepth(50);
+    const resetTxt = window.EduCore.addText(this, W / 2 + 130, H - 210, window.EduCore.t('retry'), { size: '24px', color: '#ffffff', origin: [0.5, 0.5] });
+    resetTxt.setDepth(51);
     reset.on('pointerup', () => this.nextItem());
     this.controls = [confirm, confirmTxt, reset, resetTxt];
   }
   placeOnTower(sym, sourceBg, sourceTxt) {
+    if (this.locked) return;
     this.placed.push(sym);
-    const y = BASE_Y - (this.placed.length - 1) * BLOCK_H - BLOCK_H / 2;
+    const idx = this.placed.length - 1;
+    const targetY = BASE_Y - idx * BLOCK_H - BLOCK_H / 2;
+    // Block falls from above with gravity-ish ease and lands with a bounce
     const blk = this.textures.exists('lib:block')
-      ? this.add.image(TOWER_X, y, 'lib:block').setDisplaySize(160, BLOCK_H)
-      : this.add.rectangle(TOWER_X, y, 160, BLOCK_H, 0x78716c).setStrokeStyle(2, 0x0a0a0a);
-    const lab = window.EduCore.addText(this, TOWER_X, y, sym, { size: '22px', color: '#ffffff', origin: [0.5, 0.5] });
+      ? this.add.image(TOWER_X, -100, 'lib:block').setDisplaySize(160, BLOCK_H)
+      : this.add.rectangle(TOWER_X, -100, 160, BLOCK_H, 0x78716c).setStrokeStyle(2, 0xfbbf24);
+    blk.setDepth(10);
+    blk.setRotation((Math.random() - 0.5) * 0.4);
+    this.tweens.add({
+      targets: blk,
+      y: targetY,
+      rotation: 0,
+      duration: 380,
+      ease: 'cubic.in',
+      onComplete: () => {
+        // Land bounce
+        window.GameFeel.squashStretch(blk, 'y', 0.18, 220);
+        window.GameFeel.audio.impact();
+        window.GameFeel.burst(this, blk.x, blk.y + BLOCK_H / 2, {
+          count: 6, speed: 80, life: 600, angle: -Math.PI / 2,
+          spread: Math.PI / 2, colors: [0xaca093, 0xffffff, 0x78716c],
+        });
+        // Update height meter
+        const maxH = H - 240;
+        const targetFillH = Math.min(maxH, (idx + 1) * BLOCK_H);
+        this.tweens.add({ targets: this.heightMeterFill, height: targetFillH, duration: 180 });
+        this.heightLabel.setText((idx + 1) + 'm');
+      },
+    });
+    const lab = window.EduCore.addText(this, TOWER_X, targetY, sym, { size: '24px', color: '#ffffff', origin: [0.5, 0.5] });
+    lab.setDepth(11);
+    this.tweens.add({ targets: lab, y: targetY, alpha: { from: 0, to: 1 }, duration: 380, delay: 200 });
     this.stack.push(blk); this.stack.push(lab);
     sourceBg.setAlpha(0.3); sourceBg.disableInteractive();
     sourceTxt.setAlpha(0.3);
   }
   check() {
     this.attempts += 1;
+    this.locked = true;
     const ok = multisetEqual(this.placed, this.currentItem.answer);
     if (ok) {
-      this.correct += 1; this.correctIds.push(this.currentItem.id);
+      this.correct += 1;
+      this.correctIds.push(this.currentItem.id);
       this.score.add(10);
       // Flag on top
       if (this.textures.exists('lib:flag')) {
         const y = BASE_Y - this.placed.length * BLOCK_H - 30;
-        this.stack.push(this.add.image(TOWER_X, y, 'lib:flag').setDisplaySize(60, 80));
+        const flag = this.add.image(TOWER_X, y, 'lib:flag').setDisplaySize(60, 80).setDepth(12);
+        window.GameFeel.bounceIn(flag, 0.3, 380);
+        this.stack.push(flag);
       }
-      window.EduCore.showCorrect(this, W / 2, H * 0.4, 10);
+      const isCombo = this.combo >= 3;
+      window.GameFeel.scorePopup(this, TOWER_X, BASE_Y - this.placed.length * BLOCK_H - 60, '+10', isCombo ? 0xfbbf24 : 0xffffff);
+      if (this.combo >= 3) window.GameFeel.comboPopup(this, W / 2, H * 0.45, this.combo);
+      // NEW RECORD banner if this tower beats previous height
+      if (this.placed.length > this.previousBest) {
+        this.previousBest = this.placed.length;
+        const rec = window.EduCore.addText(this, W / 2, H * 0.4, 'NEW RECORD!', {
+          size: '36px', color: '#fbbf24', origin: [0.5, 0.5],
+        });
+        rec.setDepth(80);
+        window.GameFeel.bounceIn(rec, 0.2, 380);
+        this.tweens.add({ targets: rec, alpha: 0, duration: 600, delay: 1200, onComplete: () => rec.destroy() });
+      }
+      window.GameFeel.audio.correctChain(this.combo);
+      window.GameFeel.celebrate(this, TOWER_X, BASE_Y - this.placed.length * BLOCK_H, Math.min(3 + this.combo, 7));
+      this.combo += 1;
     } else {
       this.hearts.lose();
-      // Crumble: swap top N blocks to wrong_block colour
-      this.stack.forEach((s) => { if (s.setFillStyle) s.setFillStyle(0x7f1d1d); });
-      this.cameras.main.shake(160, 0.006);
+      this.combo = 1;
+      // Tower wobbles — apply wobble to each placed block
+      this.stack.forEach((s, i) => {
+        if (s.setFillStyle) s.setFillStyle(0x7f1d1d);
+        window.GameFeel.wobble(s, 8, 500);
+      });
+      // One block tumbles off
+      const last = this.stack[this.stack.length - 2];
+      if (last) {
+        this.tweens.add({
+          targets: last,
+          x: last.x + (Math.random() < 0.5 ? -1 : 1) * 200,
+          y: last.y + 300,
+          rotation: (Math.random() - 0.5) * 6,
+          alpha: 0,
+          duration: 700,
+          ease: 'cubic.in',
+        });
+      }
+      window.GameFeel.shake(this, 4, 240);
+      window.GameFeel.audio.impact();
+      window.GameFeel.punish(this);
       window.EduCore.showWrong(this, W / 2, H * 0.4, this.currentItem.explanationOnWrong);
     }
-    this.time.delayedCall(900, () => {
+    this.time.delayedCall(1100, () => {
+      this.locked = false;
       if (this.controls) this.controls.forEach((c) => c.destroy());
       this.nextItem();
     });
@@ -171,18 +316,22 @@ class GameScene extends Phaser.Scene {
       attemptedItems: lvl.contentItems, correctItems: this.correctIds,
     });
     window.EduMindAPI.reportLevel(this.currentLevel, res.score, res.accuracy, res.durationMs);
-    const delta = res.nextLevel - this.currentLevel;
-    window.EduCore.showLevelComplete(this, { score: res.score, accuracy: res.accuracy, delta }, () => {
+    window.GameFeel.audio.levelUp();
+    window.GameFeel.levelEnd(this, this.score.value(), res.accuracy, () => {
       this.endingLevel = false;
       if (res.stopReason) { this.finish(); return; }
-      this.startLevel(res.nextLevel);
+      window.GameFeel.levelStart(this, res.nextLevel, 'FLOOR ' + res.nextLevel).then(() => this.startLevel(res.nextLevel));
     });
   }
   finish() {
     const summary = engine.buildSummary();
     window.EduMindAPI.reportSummary(summary);
     window.EduMindAPI.reportComplete(summary.totalScore, summary.masteryAchieved, summary.durationSeconds);
-    this.scene.start('EndScene');
+    if (this.windEvent) this.windEvent.remove();
+    if (this.dustTimer) this.dustTimer.remove();
+    window.GameFeel.audio.stopMusic();
+    window.GameFeel.wipeOut(this, 'up', 500);
+    this.time.delayedCall(520, () => this.scene.start('EndScene'));
   }
 }
 class EndScene extends (window.EduCore.buildEndScene(() => engine.buildSummary(), () => location.reload(), () => window.EduMindAPI.reportEvent('exit', {}))) {}

@@ -1,9 +1,11 @@
 <!DOCTYPE html>
 <!--
   EduMind Archetype: goal_shootout
-  Pedagogical mechanic: target_practice (1 correct + 3 distractors per question).
+  Mechanic: target_practice (1 correct + 3 distractors).
   Presentation: 4 goal targets across the top, player + ball at the bottom. Tap a goal
-  to "kick" the ball at the answer. Correct → goal celebration. Wrong → keeper saves it.
+  to "kick" the ball at the answer. Keeper dives toward the chosen goal; correct = goal,
+  wrong = save. Animated crowd, stadium lights pulsing, ball arcs with rotation, net ripple
+  on goal, confetti + crowd cheer on celebration.
 -->
 <html lang="en" dir="ltr">
 <head>
@@ -15,6 +17,7 @@
 <div id="game-container"></div>
 <script src="https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.min.js"></script>
 <script src="/client/EduCore.js"></script>
+<script src="/client/GameFeel.js"></script>
 <script>
 window.EduSprites = window.EduSprites || { library: {}, generated: {} };
 window.EduMindAPI = window.EduMindAPI || { reportScore:()=>{}, reportLevel:()=>{}, reportSummary:()=>{}, reportComplete:()=>{}, reportEvent:()=>{} };
@@ -40,15 +43,17 @@ const SPEC = {
     ],
     passingScore: 0.6,
   })),
-  feedback: { correctPool:['Goal!','Top bins','Back of the net'], wrongPool:['Saved!','Off-target','Hit the post'], levelComplete:['Half-time','Second half'] },
+  feedback: { correctPool:['GOAL!','Top bins','Back of the net'], wrongPool:['Saved!','Off-target','Hit the post'], levelComplete:['Half-time','Second half'] },
   visualStyle: { palette: ['#0b1020','#166534','#16a34a','#fbbf24'], accent: '#fbbf24' },
+  visualMood: 'energetic',
   audioCues: ['correct','wrong','levelUp','win','lose'],
 };
 
 const engine = window.EduCore.AdaptiveEngine.create(SPEC);
 const W = 720, H = 1280;
-const GOAL_Y = 260;
+const GOAL_Y = 320;
 const PLAYER_Y = H * 0.85;
+const LEVEL_TINTS = [0x166534, 0x14532d, 0x0f3f23, 0x0a2e19, 0x051f10];
 const MenuScene = window.EduCore.buildMenuScene(SPEC);
 
 class GameScene extends Phaser.Scene {
@@ -58,112 +63,266 @@ class GameScene extends Phaser.Scene {
     window.EduCore.preloadGeneratedConcepts(this, SPEC.concepts.map(c => c.id));
   }
   create() {
-    this.cameras.main.setBackgroundColor('#166534');
-    this.buildBackground();
+    this.combo = 1;
+    this.locked = false;
+    this.endingLevel = false;
+
+    // === LAYER 1: stadium sky / field tint ===
+    this.skyLayer = this.add.rectangle(W / 2, H / 2, W, H, LEVEL_TINTS[0]).setDepth(-30);
+
+    // === LAYER 2: animated crowd in stands — color shifts to simulate cheering bodies ===
+    this.crowd = [];
+    const crowdColors = [0xff4d6d, 0xfbbf24, 0x5eead4, 0xa78bfa, 0xffffff];
+    for (let i = 0; i < 36; i += 1) {
+      const x = 12 + (i % 12) * (W / 12);
+      const y = 20 + Math.floor(i / 12) * 28;
+      const c = this.add.rectangle(x, y, 28, 18, crowdColors[i % crowdColors.length], 0.85);
+      c.setDepth(-20);
+      this.crowd.push(c);
+    }
+    // Mexican-wave color shift
+    this.crowdWave = this.time.addEvent({
+      delay: 90, loop: true,
+      callback: () => {
+        const i = (this.crowdIdx = ((this.crowdIdx || 0) + 1) % this.crowd.length);
+        const target = this.crowd[i];
+        target.setScale(1.18, 1.18);
+        this.tweens.add({ targets: target, scaleX: 1, scaleY: 1, duration: 280 });
+      },
+    });
+
+    // === LAYER 3: stadium lights (4 corners) pulsing softly ===
+    [
+      [60, 60], [W - 60, 60], [60, 110], [W - 60, 110],
+    ].forEach((p) => {
+      const light = this.add.circle(p[0], p[1], 14, 0xfff7c0, 0.95);
+      light.setDepth(-19);
+      window.GameFeel.pulse(light, 0.18, 1200);
+    });
+
+    // === LAYER 4: field surface ===
+    if (this.textures.exists('lib:field')) {
+      this.add.image(W / 2, H - 200, 'lib:field').setDisplaySize(W, 320).setDepth(-10);
+    } else {
+      this.add.rectangle(W / 2, H - 200, W, 320, 0x166534).setDepth(-10);
+      // Field stripes
+      for (let i = 0; i < 4; i += 1) {
+        this.add.rectangle(W / 2, H - 360 + i * 100, W, 50, 0x14532d, 0.4).setDepth(-9);
+      }
+    }
+    // Center circle
+    this.add.circle(W / 2, H * 0.6, 80, 0xffffff, 0).setStrokeStyle(3, 0xffffff, 0.4).setDepth(-8);
+
+    // === Prompt band ===
+    this.add.rectangle(W / 2, 580, W - 60, 90, 0x000000, 0.5).setStrokeStyle(2, 0xfbbf24, 0.5).setDepth(20);
+    this.promptText = window.EduCore.addText(this, W / 2, 580, '', {
+      size: '26px', color: '#fbbf24', origin: [0.5, 0.5], wordWrap: { width: W - 80 },
+    });
+    this.promptText.setDepth(22);
+
+    // === HUDs ===
     this.score = window.EduCore.makeScoreHud(this, 24, 24);
     this.timer = window.EduCore.makeTimerHud(this, W - 24, 24, SPEC.levels[0].timeLimitSeconds, () => this.endLevel());
     this.levelHud = window.EduCore.makeLevelHud(this, W / 2, 24, 1, 5);
-    this.hearts = window.EduCore.makeHeartsHud(this, 80, 90, 3);
-    this.buildPlayer();
-    this.startLevel(1);
+    this.hearts = window.EduCore.makeHeartsHud(this, 80, 130, 3);
+
+    this.buildPlayerAndKeeper();
+    this.buildNet();
+
+    // Ambient stadium murmur — soft bandpass noise loop, restarted every few seconds
+    this.startCrowdMurmur();
+
+    window.GameFeel.audio.crowdCheer();
+    window.GameFeel.levelStart(this, 1, 'MATCH 1 — KICKOFF').then(() => this.startLevel(1));
   }
-  buildBackground() {
-    if (this.textures.exists('lib:crowd')) {
-      this.add.image(W / 2, 60, 'lib:crowd').setDisplaySize(W, 100);
-    } else {
-      this.add.rectangle(W / 2, 60, W, 100, 0x1c1917);
-    }
-    if (this.textures.exists('lib:field')) {
-      this.add.image(W / 2, H - 200, 'lib:field').setDisplaySize(W, 320);
-    }
+  startCrowdMurmur() {
+    // Re-trigger the soft crowd noise every 4-6 seconds for ambient bed
+    this.crowdMurmur = this.time.addEvent({
+      delay: 4500, loop: true,
+      callback: () => window.GameFeel.audio.crowdCheer(),
+    });
   }
-  buildPlayer() {
+  buildPlayerAndKeeper() {
     if (this.textures.exists('lib:player')) {
       this.player = this.add.image(W / 2, PLAYER_Y, 'lib:player').setDisplaySize(80, 120);
     } else {
-      this.player = this.add.rectangle(W / 2, PLAYER_Y, 80, 120, 0xfbbf24);
+      this.player = this.add.rectangle(W / 2, PLAYER_Y, 80, 120, 0xfbbf24).setStrokeStyle(2, 0x0a0a0a);
     }
+    this.player.setDepth(50);
+    window.GameFeel.pulse(this.player, 0.04, 1100);
+
     if (this.textures.exists('lib:ball')) {
-      this.ball = this.add.image(W / 2, PLAYER_Y - 60, 'lib:ball').setDisplaySize(50, 50);
+      this.ball = this.add.image(W / 2, PLAYER_Y - 60, 'lib:ball').setDisplaySize(46, 46);
     } else {
-      this.ball = this.add.circle(W / 2, PLAYER_Y - 60, 24, 0xffffff).setStrokeStyle(2, 0x0a0a0a);
+      this.ball = this.add.circle(W / 2, PLAYER_Y - 60, 22, 0xffffff).setStrokeStyle(2, 0x0a0a0a);
     }
-    this.ball.setDepth(40);
+    this.ball.setDepth(45);
+
     if (this.textures.exists('lib:goalkeeper')) {
-      this.keeper = this.add.image(W / 2, GOAL_Y + 40, 'lib:goalkeeper').setDisplaySize(80, 100);
+      this.keeper = this.add.image(W / 2, GOAL_Y + 60, 'lib:goalkeeper').setDisplaySize(80, 100);
     } else {
-      this.keeper = this.add.rectangle(W / 2, GOAL_Y + 40, 80, 100, 0xfbbf24);
+      this.keeper = this.add.rectangle(W / 2, GOAL_Y + 60, 80, 100, 0xa78bfa);
     }
-    this.keeper.setDepth(35);
+    this.keeper.setDepth(40);
+    window.GameFeel.pulse(this.keeper, 0.03, 1300);
+  }
+  buildNet() {
+    // Draw a stylized goal frame + a grid of net ropes that we'll ripple on goal.
+    const frameX = W / 2, frameY = GOAL_Y - 40;
+    const frameW = W * 0.62, frameH = 180;
+    this.add.rectangle(frameX, frameY, frameW, 8, 0xffffff).setDepth(30);
+    this.add.rectangle(frameX - frameW / 2, frameY + frameH / 2, 8, frameH, 0xffffff).setDepth(30);
+    this.add.rectangle(frameX + frameW / 2, frameY + frameH / 2, 8, frameH, 0xffffff).setDepth(30);
+
+    // Net ropes as a grid of thin lines
+    this.netRopes = [];
+    const cols = 12, rows = 6;
+    for (let r = 0; r < rows; r += 1) {
+      const y = frameY + 10 + (r * (frameH - 20) / rows);
+      const rope = this.add.rectangle(frameX, y, frameW - 16, 1, 0xffffff, 0.45);
+      rope.setDepth(25);
+      this.netRopes.push({ obj: rope, baseY: y });
+    }
+    for (let c = 0; c < cols; c += 1) {
+      const x = frameX - frameW / 2 + 8 + (c * (frameW - 16) / cols);
+      const rope = this.add.rectangle(x, frameY + frameH / 2 + 4, 1, frameH - 20, 0xffffff, 0.45);
+      rope.setDepth(25);
+    }
+  }
+  netRipple() {
+    // Sine-displace each horizontal rope for 600ms to simulate the net catching the ball
+    this.netRopes.forEach((r, i) => {
+      this.tweens.add({
+        targets: r.obj,
+        y: { from: r.baseY, to: r.baseY + 8 + i * 1.5 },
+        duration: 220,
+        yoyo: true,
+        repeat: 1,
+        ease: 'sine.inOut',
+      });
+    });
   }
   startLevel(idx) {
-    if (this.goals) this.goals.forEach(g => { g.bg.destroy(); if (g.icon) g.icon.destroy(); g.txt.destroy(); });
+    if (this.goals) this.goals.forEach((g) => { g.bg.destroy(); if (g.icon) g.icon.destroy(); g.txt.destroy(); });
     this.currentLevel = idx;
     const lvl = SPEC.levels[idx - 1];
     this.levelHud.set(idx, 5);
     this.timer.reset(lvl.timeLimitSeconds); this.timer.start();
     this.attempts = 0; this.correct = 0; this.hintsUsed = 0; this.correctIds = [];
     this.queue = lvl.contentItems.slice();
+    this.skyLayer.setFillStyle(LEVEL_TINTS[idx - 1] || LEVEL_TINTS[4]);
     this.nextQuestion();
   }
   nextQuestion() {
-    if (this.goals) this.goals.forEach(g => { g.bg.destroy(); if (g.icon) g.icon.destroy(); g.txt.destroy(); });
-    if (this.promptText) this.promptText.destroy();
+    if (this.goals) this.goals.forEach((g) => { g.bg.destroy(); if (g.icon) g.icon.destroy(); g.txt.destroy(); });
     if (this.queue.length === 0) { this.endLevel(); return; }
     const item = this.queue.shift();
     this.currentItem = item;
-    this.promptText = window.EduCore.addText(this, W / 2, 160, item.prompt, { size: '26px', origin: [0.5, 0.5], wordWrap: { width: W - 80 }, color: '#ffffff' });
-    this.promptText.setDepth(20);
+    this.promptText.setText(item.prompt);
+    window.GameFeel.bounceIn(this.promptText, 0.6, 300);
+
     const opts = Phaser.Utils.Array.Shuffle([item.answer, ...(item.distractors || []).slice(0, 3)]);
     const cols = 4;
     const colW = (W - 80) / cols;
     this.goals = opts.map((opt, i) => {
       const x = 40 + colW / 2 + i * colW;
       const bg = this.textures.exists('lib:answer_panel')
-        ? this.add.image(x, GOAL_Y, 'lib:answer_panel').setDisplaySize(colW - 20, 110).setInteractive({ useHandCursor: true })
-        : this.add.rectangle(x, GOAL_Y, colW - 20, 110, 0x1f2937, 0.92).setStrokeStyle(3, 0xfbbf24).setInteractive({ useHandCursor: true });
-      bg.setDepth(20);
+        ? this.add.image(x, GOAL_Y, 'lib:answer_panel').setDisplaySize(colW - 20, 130).setInteractive({ useHandCursor: true })
+        : this.add.rectangle(x, GOAL_Y, colW - 20, 130, 0x1f2937, 0.92).setStrokeStyle(3, 0xfbbf24).setInteractive({ useHandCursor: true });
+      bg.setDepth(35);
       const conceptId = item.concepts[0];
       let icon = null;
       if (conceptId && this.textures.exists('gen:' + conceptId)) {
-        icon = this.add.image(x, GOAL_Y - 22, 'gen:' + conceptId).setDisplaySize(48, 48).setDepth(21);
+        icon = this.add.image(x, GOAL_Y - 32, 'gen:' + conceptId).setDisplaySize(48, 48).setDepth(36);
       }
-      const txt = window.EduCore.addText(this, x, GOAL_Y + (icon ? 28 : 0), opt, { size: '20px', origin: [0.5, 0.5], wordWrap: { width: colW - 30 } });
-      txt.setDepth(22);
+      const txt = window.EduCore.addText(this, x, GOAL_Y + (icon ? 30 : 0), opt, { size: '20px', color: '#ffffff', origin: [0.5, 0.5], wordWrap: { width: colW - 30 } });
+      txt.setDepth(37);
       bg.on('pointerup', () => this.kickAt(x, opt));
+      window.GameFeel.bounceIn(bg, 0.5, 240);
       return { bg, icon, txt, x, isCorrect: opt === item.answer };
     });
   }
   kickAt(targetX, opt) {
     if (this.locked) return;
     this.locked = true;
-    // Move ball; keeper dives slightly
+    window.GameFeel.audio.woosh();
+
+    // Player kick anticipation
+    window.GameFeel.squashStretch(this.player, 'y', 0.15, 200);
+
     const correct = opt === this.currentItem.answer;
-    const keeperDx = (targetX - W / 2) * (correct ? 0.45 : 0.95);
+    // Keeper dives — on wrong, dives correctly toward target; on right, dives the OTHER way
+    const wrongDiveX = (Math.random() < 0.5 ? -1 : 1) * (W * 0.32);
+    const keeperDx = correct ? wrongDiveX : (targetX - W / 2) * 0.92;
     this.tweens.add({ targets: this.keeper, x: W / 2 + keeperDx, duration: 380, ease: 'sine.out' });
+    window.GameFeel.wobble(this.keeper, 6, 380);
+
+    // Ball arc — apex roughly between player and goal y
+    const apexY = (PLAYER_Y + GOAL_Y) / 2 - 80;
+    const path = [
+      { x: this.ball.x, y: this.ball.y },
+      { x: (this.ball.x + targetX) / 2, y: apexY },
+      { x: targetX, y: GOAL_Y },
+    ];
     this.tweens.add({
       targets: this.ball,
-      x: targetX,
-      y: GOAL_Y,
-      duration: 480,
+      x: { from: path[0].x, to: path[2].x },
+      duration: 540,
       ease: 'sine.in',
-      onComplete: () => {
-        this.attempts += 1;
-        if (correct) {
-          this.correct += 1; this.correctIds.push(this.currentItem.id);
-          this.score.add(10);
-          window.EduCore.showCorrect(this, W / 2, H * 0.45, 10);
-        } else {
-          this.hearts.lose();
-          window.EduCore.showWrong(this, W / 2, H * 0.45, this.currentItem.explanationOnWrong);
-        }
-        this.time.delayedCall(700, () => {
-          this.ball.setPosition(W / 2, PLAYER_Y - 60);
-          this.keeper.setPosition(W / 2, GOAL_Y + 40);
-          this.locked = false;
-          this.nextQuestion();
-        });
-      },
+    });
+    this.tweens.add({
+      targets: this.ball,
+      y: { from: path[0].y, to: path[2].y },
+      duration: 540,
+      ease: 'cubic.in',
+    });
+    this.tweens.add({
+      targets: this.ball,
+      rotation: '+=' + (Math.PI * 4),
+      duration: 540,
+    });
+    this.tweens.add({
+      targets: this.ball,
+      scaleX: 0.6, scaleY: 0.6,
+      duration: 540,
+      onComplete: () => this.resolveKick(correct, targetX),
+    });
+  }
+  resolveKick(correct, targetX) {
+    this.attempts += 1;
+    if (correct) {
+      this.correct += 1;
+      this.correctIds.push(this.currentItem.id);
+      this.score.add(10);
+      // Net ripple + confetti from goal frame
+      this.netRipple();
+      window.GameFeel.confetti(this, targetX, GOAL_Y - 80, 18);
+      window.GameFeel.scorePopup(this, targetX, GOAL_Y - 100, 'GOAL! +10', 0xfbbf24);
+      if (this.combo >= 3) window.GameFeel.comboPopup(this, W / 2, H / 2, this.combo);
+      window.GameFeel.audio.correctChain(this.combo);
+      window.GameFeel.audio.crowdCheer();
+      window.GameFeel.zoomPunch(this, 0.06, 320);
+      window.GameFeel.celebrate(this, targetX, GOAL_Y, Math.min(3 + this.combo, 8));
+      this.combo += 1;
+    } else {
+      this.hearts.lose();
+      this.combo = 1;
+      // Keeper catches ball — small bounce + dust
+      window.GameFeel.burst(this, this.keeper.x, this.keeper.y, {
+        count: 10, speed: 100, life: 600, colors: [0xffffff, 0x9ca3af, 0xfbbf24],
+      });
+      window.GameFeel.shake(this, 3, 200);
+      window.GameFeel.audio.impact();
+      window.GameFeel.punish(this);
+      window.EduCore.showWrong(this, W / 2, H * 0.55, this.currentItem.explanationOnWrong);
+    }
+    this.time.delayedCall(900, () => {
+      this.ball.setPosition(W / 2, PLAYER_Y - 60);
+      this.ball.setScale(1, 1);
+      this.ball.setRotation(0);
+      this.keeper.x = W / 2;
+      this.locked = false;
+      this.nextQuestion();
     });
   }
   endLevel() {
@@ -179,18 +338,21 @@ class GameScene extends Phaser.Scene {
       attemptedItems: lvl.contentItems, correctItems: this.correctIds,
     });
     window.EduMindAPI.reportLevel(this.currentLevel, res.score, res.accuracy, res.durationMs);
-    const delta = res.nextLevel - this.currentLevel;
-    window.EduCore.showLevelComplete(this, { score: res.score, accuracy: res.accuracy, delta }, () => {
+    window.GameFeel.audio.levelUp();
+    window.GameFeel.levelEnd(this, this.score.value(), res.accuracy, () => {
       this.endingLevel = false;
       if (res.stopReason) { this.finish(); return; }
-      this.startLevel(res.nextLevel);
+      window.GameFeel.levelStart(this, res.nextLevel, 'MATCH ' + res.nextLevel).then(() => this.startLevel(res.nextLevel));
     });
   }
   finish() {
     const summary = engine.buildSummary();
     window.EduMindAPI.reportSummary(summary);
     window.EduMindAPI.reportComplete(summary.totalScore, summary.masteryAchieved, summary.durationSeconds);
-    this.scene.start('EndScene');
+    if (this.crowdMurmur) this.crowdMurmur.remove();
+    window.GameFeel.audio.stopMusic();
+    window.GameFeel.irisClose(this, W / 2, H / 2, 500);
+    this.time.delayedCall(520, () => this.scene.start('EndScene'));
   }
 }
 class EndScene extends (window.EduCore.buildEndScene(() => engine.buildSummary(), () => location.reload(), () => window.EduMindAPI.reportEvent('exit', {}))) {}

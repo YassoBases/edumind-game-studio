@@ -1,17 +1,13 @@
 <!DOCTYPE html>
 <!--
   EduMind Archetype: lane_racer
-  Pedagogical mechanic: target_practice (one correct + 3 distractors per question).
-  Presentation: 3-lane top-down racer. Player auto-advances; tap left half to swap lane left,
-  right half to swap lane right. Answer panels float toward the player in random lanes.
-  Hitting the correct panel = points + speed boost + cue.correct. Wrong = heart lost + wobble.
-  Difficulty scales by speed + question depth + spawn rate; mechanic stays familiar.
+  Pedagogical mechanic: target_practice (one correct + N distractors per question).
+  Presentation: 3-lane top-down racer. Player auto-advances; tap left half to swap one lane
+  left, right half to swap one lane right. Answer panels appear ahead in three lanes; player
+  drives through the correct one. Wrong = heart lost + crash sequence (car keeps going).
 
-  Hard contract preserved: 3 scenes, 5 levels via content swap, EduCore everywhere,
-  bridge calls reportLevel/reportSummary/reportComplete, AdaptiveEngine drives transitions.
-
-  Sprite roles consumed:  player, rival (unused for now), road, horizon, answer_panel, crash_particles
-  Generated-sprite hook:   topic icons keyed by concept id appear inside each answer panel
+  Every state change has a beat (GameFeel.*): score popups, combo audio, tire-smoke bursts
+  on lane switch, engine-rev on level-up, screen shake on crash, parallax road + sky.
 -->
 <html lang="en" dir="ltr">
 <head>
@@ -23,9 +19,8 @@
 <div id="game-container"></div>
 <script src="https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.min.js"></script>
 <script src="/client/EduCore.js"></script>
+<script src="/client/GameFeel.js"></script>
 <script>
-// Sprite/bridge stubs for standalone preview only. The backend scaffold replaces these with
-// real values; never rely on these defaults in a generated game.
 window.EduSprites = window.EduSprites || { library: {}, generated: {} };
 window.EduMindAPI = window.EduMindAPI || { reportScore:()=>{}, reportLevel:()=>{}, reportSummary:()=>{}, reportComplete:()=>{}, reportEvent:()=>{} };
 window.EduCore.setLanguage('en');
@@ -40,7 +35,7 @@ const SPEC = {
   theme: 'F1 racing',
   orientation: 'portrait',
   concepts: [
-    { id: 'overall_equation', label: 'Overall equation', description: 'Reactants and products of photosynthesis' },
+    { id: 'overall_equation', label: 'Overall equation', description: 'Reactants and products' },
     { id: 'light_reactions', label: 'Light reactions', description: 'Light-dependent stage' },
     { id: 'calvin_cycle', label: 'Calvin cycle', description: 'Light-independent stage' },
     { id: 'pigments', label: 'Pigments', description: 'Chlorophyll a, b, carotenoids' },
@@ -51,11 +46,11 @@ const SPEC = {
     index: i + 1, name: 'Lap ' + (i + 1), timeLimitSeconds: 60 - i * 5,
     hintsAvailable: Math.max(1, 3 - Math.floor(i / 2)),
     contentItems: [
-      { id: 'l' + i + 'a', prompt: 'Reactants of photosynthesis?', answer: 'CO2 + H2O', distractors: ['O2 + glucose','ATP + NADPH','Glucose + O2'], concepts: ['overall_equation'], difficulty: 0.1 + i * 0.15, explanationOnWrong: 'Plants take in CO2 and H2O; they produce O2 and glucose.' },
-      { id: 'l' + i + 'b', prompt: 'Where do light reactions occur?', answer: 'Thylakoid membrane', distractors: ['Stroma','Mitochondria','Nucleus'], concepts: ['light_reactions','structures'], difficulty: 0.2 + i * 0.15, explanationOnWrong: 'Light reactions happen in the thylakoid membrane of chloroplasts.' },
-      { id: 'l' + i + 'c', prompt: 'Main green pigment?', answer: 'Chlorophyll a', distractors: ['Chlorophyll b','Carotenoid','Xanthophyll'], concepts: ['pigments'], difficulty: 0.15 + i * 0.15, explanationOnWrong: 'Chlorophyll a is the primary pigment driving photosynthesis.' },
-      { id: 'l' + i + 'd', prompt: 'What does the Calvin cycle produce?', answer: 'Glucose', distractors: ['ATP only','Oxygen','NADPH'], concepts: ['calvin_cycle'], difficulty: 0.25 + i * 0.15, explanationOnWrong: 'The Calvin cycle fixes CO2 into glucose using ATP and NADPH.' },
-      { id: 'l' + i + 'e', prompt: 'Limiting factor on a cloudy day?', answer: 'Light intensity', distractors: ['CO2','Temperature','Water'], concepts: ['limiting_factors'], difficulty: 0.3 + i * 0.15, explanationOnWrong: 'On a cloudy day, light becomes the limiting factor.' },
+      { id: 'l' + i + 'a', prompt: 'Reactants of photosynthesis?', answer: 'CO2 + H2O', distractors: ['O2 + glucose','ATP + NADPH','Glucose + O2'], concepts: ['overall_equation'], difficulty: 0.1 + i * 0.15, explanationOnWrong: 'Plants take in CO2 and H2O.' },
+      { id: 'l' + i + 'b', prompt: 'Where do light reactions occur?', answer: 'Thylakoid membrane', distractors: ['Stroma','Mitochondria','Nucleus'], concepts: ['light_reactions','structures'], difficulty: 0.2 + i * 0.15, explanationOnWrong: 'Light reactions are in the thylakoid membrane.' },
+      { id: 'l' + i + 'c', prompt: 'Main green pigment?', answer: 'Chlorophyll a', distractors: ['Chlorophyll b','Carotenoid','Xanthophyll'], concepts: ['pigments'], difficulty: 0.15 + i * 0.15, explanationOnWrong: 'Chlorophyll a is the primary pigment.' },
+      { id: 'l' + i + 'd', prompt: 'What does the Calvin cycle produce?', answer: 'Glucose', distractors: ['ATP only','Oxygen','NADPH'], concepts: ['calvin_cycle'], difficulty: 0.25 + i * 0.15, explanationOnWrong: 'Calvin cycle fixes CO2 into glucose.' },
+      { id: 'l' + i + 'e', prompt: 'Limiting factor on a cloudy day?', answer: 'Light intensity', distractors: ['CO2','Temperature','Water'], concepts: ['limiting_factors'], difficulty: 0.3 + i * 0.15, explanationOnWrong: 'On cloudy days light becomes limiting.' },
     ],
     passingScore: 0.6,
   })),
@@ -65,6 +60,7 @@ const SPEC = {
     levelComplete: ['Lap finished', 'Pit done, next lap'],
   },
   visualStyle: { palette: ['#0b1020','#1f2937','#dc2626','#fbbf24'], accent: '#fbbf24' },
+  visualMood: 'energetic',
   audioCues: ['correct','wrong','win','lose','levelUp'],
 };
 
@@ -72,13 +68,15 @@ const engine = window.EduCore.AdaptiveEngine.create(SPEC);
 const W = 720, H = 1280;
 const LANE_X = [W * 0.22, W * 0.50, W * 0.78];
 const PLAYER_Y = H * 0.82;
-const PROMPT_BAND_H = 200;   // top region reserved for question text
+const PROMPT_BAND_H = 200;
 const GATE_SPAWN_Y = PROMPT_BAND_H + 40;
-// Per-level scroll speed (px/sec). Slow enough to read the answer panel before the gate
-// reaches the player — distance covered = ~880 px, so 110 px/s gives 8s reading window at L1.
+
+// Per-level scroll speed (px/sec). Level 1 leaves ~8s reading window.
 const LEVEL_SPEEDS = [110, 140, 170, 200, 230];
-// Inter-gate pause (ms) after the previous gate is resolved.
 const LEVEL_PAUSE_MS = [700, 600, 500, 400, 350];
+
+// Per-level palette accent shifts so Level 5 doesn't look like Level 1.
+const LEVEL_TINTS = [0x0b1020, 0x1a1542, 0x2a0e3e, 0x3a0a32, 0x4a0820];
 
 const MenuScene = window.EduCore.buildMenuScene(SPEC);
 
@@ -89,41 +87,82 @@ class GameScene extends Phaser.Scene {
     window.EduCore.preloadGeneratedConcepts(this, SPEC.concepts.map(c => c.id));
   }
   create() {
-    this.cameras.main.setBackgroundColor('#0b1020');
-    this.buildBackground();
-    // Prompt band — dim strip at the top hosting the question
+    this.combo = 1;
+    this.locked = false;
+    this.endingLevel = false;
+    this.gates = [];
+    this.traffic = [];
+    this.speedLines = [];
+
+    // === LAYER 1: deepest background (color wash that shifts per level) ===
+    this.skyLayer = this.add.rectangle(W / 2, H / 2, W, H, LEVEL_TINTS[0]).setDepth(-30);
+
+    // === LAYER 2: distant horizon stars + far-off mountains (slow parallax) ===
+    if (this.textures.exists('gen:theme_background')) {
+      this.add.image(W / 2, H / 2, 'gen:theme_background').setDisplaySize(W, H).setDepth(-20).setAlpha(0.7);
+    }
+    this.farLayer = window.GameFeel.parallaxLayer(this, {
+      depth: -15,
+      speed: 22,
+      spacing: 200,
+      direction: 'down',
+      factory: (y) => this.add.rectangle(
+        80 + Math.random() * (W - 160),
+        y + (Math.random() - 0.5) * 80,
+        2 + Math.random() * 2, 2 + Math.random() * 2,
+        0xfbbf24, 0.55,
+      ),
+    });
+
+    // === LAYER 3: mid-range horizon stripe ===
+    if (this.textures.exists('lib:horizon')) {
+      this.add.image(W / 2, 280, 'lib:horizon').setDisplaySize(W, 240).setDepth(-10);
+    } else {
+      this.add.rectangle(W / 2, 280, W, 240, 0x312e81, 0.55).setDepth(-10);
+    }
+
+    // === LAYER 4: scrolling road tile (closest parallax, fastest) ===
+    if (this.textures.exists('lib:road')) {
+      this.road1 = this.add.image(W / 2, 760, 'lib:road').setDisplaySize(W, 720).setDepth(-5);
+      this.road2 = this.add.image(W / 2, 40, 'lib:road').setDisplaySize(W, 720).setDepth(-5);
+    } else {
+      this.road1 = this.add.rectangle(W / 2, 760, W, 720, 0x0f172a, 0.7).setDepth(-5);
+      this.road2 = this.add.rectangle(W / 2, 40, W, 720, 0x0f172a, 0.7).setDepth(-5);
+    }
+
+    // === Lane dividers (dashed lines) ===
+    for (let i = 0; i < 2; i += 1) {
+      const x = LANE_X[i] + (LANE_X[i + 1] - LANE_X[i]) / 2;
+      for (let j = 0; j < 8; j += 1) {
+        this.add.rectangle(x, j * 200, 4, 60, 0xfbbf24, 0.4).setDepth(-4);
+      }
+    }
+
+    // === Prompt band — dim strip with the active question ===
     this.add.rectangle(W / 2, PROMPT_BAND_H / 2, W, PROMPT_BAND_H, 0x000000, 0.55).setDepth(60);
+    this.promptText = window.EduCore.addText(this, W / 2, 140, '', {
+      size: '28px', color: '#fbbf24', origin: [0.5, 0.5], wordWrap: { width: W - 60 },
+    });
+    this.promptText.setDepth(61);
+
+    // === HUDs ===
     this.score = window.EduCore.makeScoreHud(this, 24, 24);
     this.timer = window.EduCore.makeTimerHud(this, W - 24, 24, SPEC.levels[0].timeLimitSeconds, () => this.endLevel());
     this.levelHud = window.EduCore.makeLevelHud(this, W / 2, 24, 1, 5);
     this.hearts = window.EduCore.makeHeartsHud(this, 80, 90, 3);
-    // Question display lives in the prompt band, updated per gate
-    this.promptText = window.EduCore.addText(this, W / 2, 140, '', {
-      size: '28px', color: '#ffffff', origin: [0.5, 0.5], wordWrap: { width: W - 60 },
-    });
-    this.promptText.setDepth(61);
+
+    // === Speedometer popup widget — small floating MPH on every correct ===
+    this.speedMph = 60;
+
     this.buildPlayer();
+    this.spawnAmbientTraffic();
     this.bindInput();
-    this.startLevel(1);
-  }
-  buildBackground() {
-    // Optional AI-generated full backdrop — if missing, fall back to horizon + scrolling road.
-    if (this.textures.exists('gen:theme_background')) {
-      this.add.image(W / 2, H / 2, 'gen:theme_background').setDisplaySize(W, H).setDepth(-10);
-    }
-    this.bgLayer = this.add.container(0, 0);
-    if (this.textures.exists('lib:horizon')) {
-      this.bgLayer.add(this.add.image(W / 2, 280, 'lib:horizon').setDisplaySize(W, 240));
-    } else if (!this.textures.exists('gen:theme_background')) {
-      this.bgLayer.add(this.add.rectangle(W / 2, 280, W, 240, 0x312e81));
-    }
-    if (this.textures.exists('lib:road')) {
-      this.road1 = this.add.image(W / 2, 760, 'lib:road').setDisplaySize(W, 720);
-      this.road2 = this.add.image(W / 2, 40, 'lib:road').setDisplaySize(W, 720);
-    } else {
-      this.road1 = this.add.rectangle(W / 2, 760, W, 720, 0x0f172a, 0.7);
-      this.road2 = this.add.rectangle(W / 2, 40, W, 720, 0x0f172a, 0.7);
-    }
+
+    // === Cinematic intro before the first lap ===
+    window.GameFeel.audio.engineRev();
+    window.GameFeel.levelStart(this, 1, 'LAP 1 — ' + (SPEC.levels[0].name || 'Start')).then(() => {
+      this.startLevel(1);
+    });
   }
   buildPlayer() {
     this.laneIndex = 1;
@@ -131,9 +170,24 @@ class GameScene extends Phaser.Scene {
     if (this.textures.exists('lib:player')) {
       this.player = this.add.image(x, PLAYER_Y, 'lib:player').setDisplaySize(96, 144);
     } else {
-      this.player = this.add.rectangle(x, PLAYER_Y, 96, 144, 0xdc2626).setStrokeStyle(2, 0x0f172a);
+      this.player = this.add.rectangle(x, PLAYER_Y, 96, 144, 0xdc2626).setStrokeStyle(2, 0xfbbf24);
     }
     this.player.setDepth(50);
+    // Subtle idle pulse on the car
+    window.GameFeel.pulse(this.player, 0.025, 1400);
+  }
+  spawnAmbientTraffic() {
+    // 4 rival cars at random lanes, scrolling down slower than the player to feel like
+    // overtaking. They don't affect gameplay — purely atmosphere.
+    for (let i = 0; i < 4; i += 1) {
+      const lane = Phaser.Math.Between(0, 2);
+      const y = -200 - i * 320;
+      const car = this.textures.exists('lib:rival')
+        ? this.add.image(LANE_X[lane], y, 'lib:rival').setDisplaySize(86, 128)
+        : this.add.rectangle(LANE_X[lane], y, 86, 128, 0x06b6d4, 0.85);
+      car.setDepth(40);
+      this.traffic.push({ obj: car, baseSpeed: 30 + Math.random() * 30 });
+    }
   }
   bindInput() {
     this.input.on('pointerdown', (p) => {
@@ -144,7 +198,20 @@ class GameScene extends Phaser.Scene {
   }
   swapLane(target) {
     this.laneIndex = target;
-    this.tweens.add({ targets: this.player, x: LANE_X[target], duration: 160, ease: 'sine.out' });
+    // Tire smoke burst at the old position
+    window.GameFeel.burst(this, this.player.x, this.player.y + 30, {
+      count: 8, speed: 80, spread: Math.PI / 2,
+      angle: Math.PI / 2, life: 500,
+      colors: [0xfbbf24, 0xffffff, 0x9ca3af],
+    });
+    window.GameFeel.audio.woosh();
+    this.tweens.add({
+      targets: this.player,
+      x: LANE_X[target],
+      duration: 160,
+      ease: 'sine.out',
+    });
+    window.GameFeel.squashStretch(this.player, 'x', 0.12, 200);
   }
   startLevel(idx) {
     this.currentLevel = idx;
@@ -156,28 +223,29 @@ class GameScene extends Phaser.Scene {
     this.pauseMs = LEVEL_PAUSE_MS[idx - 1];
     this.attempts = 0; this.correct = 0; this.hintsUsed = 0; this.correctIds = [];
     this.queue = Phaser.Utils.Array.Shuffle(lvl.contentItems.slice());
-    this.gates = []; // single active gate at a time
+
+    // Per-level background tint shift
+    this.skyLayer.setFillStyle(LEVEL_TINTS[idx - 1] || LEVEL_TINTS[4]);
+
     this.spawnGate();
   }
   spawnGate() {
     if (this.locked) return;
-    if (this.queue.length === 0) {
-      // Wait for in-flight gate to resolve; endLevel() fires when the last one is done.
-      return;
-    }
-    if (this.gates.some((g) => !g.resolved)) return; // never two active gates
+    if (this.queue.length === 0) return;
+    if (this.gates.some((g) => !g.resolved)) return;
     const item = this.queue.shift();
     this.currentItem = item;
     this.promptText.setText(item.prompt);
+    window.GameFeel.bounceIn(this.promptText, 0.6, 280);
+
     const correctLane = Phaser.Math.Between(0, 2);
-    // Build three lane options: correct in correctLane, two distractors filling the others.
     const distractors = (item.distractors || []).slice();
     const options = new Array(3);
     options[correctLane] = item.answer;
     let dIdx = 0;
     for (let i = 0; i < 3; i += 1) {
       if (i === correctLane) continue;
-      options[i] = distractors[dIdx % distractors.length] || `Option ${i + 1}`;
+      options[i] = distractors[dIdx % distractors.length] || ('Option ' + (i + 1));
       dIdx += 1;
     }
     const panels = LANE_X.map((x, i) => this.makePanel(x, GATE_SPAWN_Y, options[i], item, i === correctLane));
@@ -209,22 +277,40 @@ class GameScene extends Phaser.Scene {
     this.road2.y += dy;
     if (this.road1.y >= H + 360) this.road1.y = this.road2.y - 720;
     if (this.road2.y >= H + 360) this.road2.y = this.road1.y - 720;
+    // Ambient traffic
+    for (const t of this.traffic) {
+      t.obj.y += (this.speed - t.baseSpeed) * dt;
+      if (t.obj.y > H + 200) {
+        const lane = Phaser.Math.Between(0, 2);
+        t.obj.x = LANE_X[lane];
+        t.obj.y = -200 - Math.random() * 200;
+        t.baseSpeed = 30 + Math.random() * 30;
+      }
+    }
+    // Speed lines on the sides at high speed
+    if (this.speed > 180 && Math.random() < 0.4) {
+      const side = Math.random() < 0.5 ? 30 : W - 30;
+      const line = this.add.rectangle(side, -20, 3, 80, 0xfff7c0, 0.5).setDepth(-3);
+      this.speedLines.push(line);
+      this.tweens.add({
+        targets: line, y: H + 80, alpha: 0, duration: 600,
+        onComplete: () => { line.destroy(); this.speedLines.splice(this.speedLines.indexOf(line), 1); },
+      });
+    }
     // Advance gates
     for (const g of this.gates) {
       if (g.resolved) continue;
       g.y += dy;
       for (const p of g.panels) {
         p.bg.y = g.y;
-        if (p.icon) p.icon.y = g.y - 22;
-        p.txt.y = g.y + (p.icon ? 30 : 0);
+        if (p.icon) p.icon.y = g.y - 32;
+        p.txt.y = g.y + (p.icon ? 28 : 0);
       }
       if (g.y > PLAYER_Y - 60) {
-        // Detect collision with player's lane
         const hitPanel = g.panels.find((p) => Math.abs(p.x - LANE_X[this.laneIndex]) < 60);
         this.resolveGate(g, hitPanel);
       }
     }
-    // Cleanup off-screen gates
     this.gates = this.gates.filter((g) => {
       if (g.resolved && g.y > H + 200) {
         g.panels.forEach((p) => { p.bg.destroy(); if (p.icon) p.icon.destroy(); p.txt.destroy(); });
@@ -232,7 +318,6 @@ class GameScene extends Phaser.Scene {
       }
       return true;
     });
-    // End-of-level: queue drained, every gate resolved AND scrolled off-screen
     if (this.queue.length === 0 && this.gates.length === 0 && !this.endingLevel) {
       this.endingLevel = true;
       this.time.delayedCall(800, () => this.endLevel());
@@ -246,16 +331,40 @@ class GameScene extends Phaser.Scene {
       this.correct += 1;
       this.correctIds.push(gate.item.id);
       this.score.add(10);
-      window.EduCore.showCorrect(this, W / 2, H * 0.50, 10);
+      this.speedMph += 1;
+      // Score popup with combo-aware color
+      const isCombo = this.combo >= 3;
+      window.GameFeel.scorePopup(
+        this, hitPanel.bg.x, hitPanel.bg.y,
+        '+10', isCombo ? 0xfbbf24 : 0xffffff,
+      );
+      // Tiny MPH popup under the player car
+      window.GameFeel.scorePopup(this, this.player.x, this.player.y - 80, '+1 MPH', 0x5eead4);
+      window.GameFeel.audio.correctChain(this.combo);
+      if (this.combo >= 3) {
+        window.GameFeel.comboPopup(this, W / 2, H * 0.5, this.combo);
+      }
+      window.GameFeel.celebrate(this, hitPanel.bg.x, hitPanel.bg.y, Math.min(2 + this.combo, 7));
+      this.combo += 1;
       this.speed = Math.min(this.speed * 1.05, LEVEL_SPEEDS[this.currentLevel - 1] * 1.25);
     } else {
       this.hearts.lose();
-      this.cameras.main.shake(180, 0.008);
-      window.EduCore.showWrong(this, W / 2, H * 0.50, gate.item.explanationOnWrong);
+      this.combo = 1;
+      // Crash sequence — wobble car, smoke burst, hitstop, gentle shake, never harsh
+      window.GameFeel.burst(this, this.player.x, this.player.y, {
+        count: 14, speed: 220, spread: Math.PI * 2,
+        life: 700, colors: [0xfbbf24, 0xdc2626, 0xffffff],
+      });
+      window.GameFeel.wobble(this.player, 12, 380);
+      window.GameFeel.audio.impact();
+      window.GameFeel.hitstop(this, 80);
+      window.GameFeel.shake(this, 4, 220);
+      window.GameFeel.punish(this);
+      // Show explanation
+      window.EduCore.showWrong(this, W / 2, H * 0.55, gate.item.explanationOnWrong);
       this.speed = Math.max(this.speed * 0.90, LEVEL_SPEEDS[this.currentLevel - 1] * 0.75);
-      if (hitPanel) hitPanel.bg.setStrokeStyle && hitPanel.bg.setStrokeStyle(4, 0xdc2626);
+      if (hitPanel && hitPanel.bg.setStrokeStyle) hitPanel.bg.setStrokeStyle(4, 0xdc2626);
     }
-    // Schedule the next gate after a short pause so the player can register the result
     if (this.queue.length > 0) {
       this.time.delayedCall(this.pauseMs, () => this.spawnGate());
     }
@@ -273,26 +382,40 @@ class GameScene extends Phaser.Scene {
       attemptedItems: lvl.contentItems, correctItems: this.correctIds,
     });
     window.EduMindAPI.reportLevel(this.currentLevel, res.score, res.accuracy, res.durationMs);
-    const delta = res.nextLevel - this.currentLevel;
-    window.EduCore.showLevelComplete(this, { score: res.score, accuracy: res.accuracy, delta }, () => {
+
+    // Stop in-flight tweens on speed lines so the celebration card is uncluttered
+    this.speedLines.forEach((s) => s.destroy());
+    this.speedLines.length = 0;
+
+    window.GameFeel.audio.engineRev();
+    window.GameFeel.levelEnd(this, this.score.value(), res.accuracy, () => {
       this.locked = false;
       this.endingLevel = false;
       if (res.stopReason) { this.finish(); return; }
       this.gates.forEach((g) => g.panels.forEach((p) => { p.bg.destroy(); if (p.icon) p.icon.destroy(); p.txt.destroy(); }));
       this.gates = [];
       this.promptText.setText('');
-      this.startLevel(res.nextLevel);
+      // Cinematic intro for the next lap
+      window.GameFeel.levelStart(this, res.nextLevel, 'LAP ' + res.nextLevel).then(() => {
+        this.startLevel(res.nextLevel);
+      });
     });
   }
   finish() {
     const summary = engine.buildSummary();
     window.EduMindAPI.reportSummary(summary);
     window.EduMindAPI.reportComplete(summary.totalScore, summary.masteryAchieved, summary.durationSeconds);
-    this.scene.start('EndScene');
+    window.GameFeel.audio.stopMusic();
+    window.GameFeel.wipeOut(this, 'down', 400);
+    this.time.delayedCall(420, () => this.scene.start('EndScene'));
   }
 }
 
-class EndScene extends (window.EduCore.buildEndScene(() => engine.buildSummary(), () => location.reload(), () => window.EduMindAPI.reportEvent('exit', {}))) {}
+class EndScene extends (window.EduCore.buildEndScene(
+  () => engine.buildSummary(),
+  () => location.reload(),
+  () => window.EduMindAPI.reportEvent('exit', {})
+)) {}
 
 new Phaser.Game({
   type: Phaser.AUTO,

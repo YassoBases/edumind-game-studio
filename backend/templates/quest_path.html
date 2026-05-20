@@ -1,10 +1,11 @@
 <!DOCTYPE html>
 <!--
   EduMind Archetype: quest_path
-  Pedagogical mechanic: quiz_quest.
-  Presentation: a hero walks along a side-scrolling path. At each gate the hero stops and a
-  multi-step question appears with 4 options. Picking the right one advances; wrong stays put
-  + loses a heart. Backdrop changes subtly per level.
+  Mechanic: quiz_quest — multi-step problems with branching forks.
+  Presentation: side-scrolling fantasy/sci-fi/detective/anime environment that changes
+  per level (forest → cave → mountain → castle → boss room). Painted-style parallax,
+  character with bobbing idle, typewriter dialog box, branch path visualization, sparkle
+  trail on correct walks, dramatic boss-room intro at Level 5.
 -->
 <html lang="en" dir="ltr">
 <head>
@@ -16,6 +17,7 @@
 <div id="game-container"></div>
 <script src="https://cdn.jsdelivr.net/npm/phaser@4.1.0/dist/phaser.min.js"></script>
 <script src="/client/EduCore.js"></script>
+<script src="/client/GameFeel.js"></script>
 <script>
 window.EduSprites = window.EduSprites || { library: {}, generated: {} };
 window.EduMindAPI = window.EduMindAPI || { reportScore:()=>{}, reportLevel:()=>{}, reportSummary:()=>{}, reportComplete:()=>{}, reportEvent:()=>{} };
@@ -41,12 +43,16 @@ const SPEC = {
   })),
   feedback: { correctPool:['Onward!','Path unlocked','Brave move'], wrongPool:['Wrong path','Re-think','Try again'], levelComplete:['Chapter cleared','Next chapter'] },
   visualStyle: { palette: ['#0b1020','#312e81','#7c3aed','#fbbf24'], accent: '#fbbf24' },
+  visualMood: 'cinematic',
   audioCues: ['correct','wrong','levelUp','win','lose'],
 };
 
 const engine = window.EduCore.AdaptiveEngine.create(SPEC);
 const W = 720, H = 1280;
 const HERO_Y = H * 0.72;
+// Per-level environment tints — forest → cave → mountain → castle → boss
+const LEVEL_TINTS = [0x1d4e3a, 0x1c1917, 0x312e81, 0x4a154b, 0x1f0a0a];
+const LEVEL_NAMES = ['THE FOREST', 'THE CAVE', 'THE MOUNTAIN', 'THE CASTLE', 'THE BOSS ROOM'];
 const MenuScene = window.EduCore.buildMenuScene(SPEC);
 
 class GameScene extends Phaser.Scene {
@@ -56,31 +62,67 @@ class GameScene extends Phaser.Scene {
     window.EduCore.preloadGeneratedConcepts(this, SPEC.concepts.map(c => c.id));
   }
   create() {
-    if (this.textures.exists('lib:backdrop')) {
-      this.add.image(W / 2, H / 2, 'lib:backdrop').setDisplaySize(W, H);
-    } else {
-      this.cameras.main.setBackgroundColor('#312e81');
+    this.combo = 1;
+    this.locked = false;
+
+    // === LAYER 1: distant sky / environment tint ===
+    this.skyLayer = this.add.rectangle(W / 2, H / 2, W, H, LEVEL_TINTS[0]).setDepth(-30);
+
+    // === LAYER 2: AI-generated backdrop if available ===
+    if (this.textures.exists('gen:theme_background')) {
+      this.add.image(W / 2, H / 2, 'gen:theme_background').setDisplaySize(W, H).setDepth(-25).setAlpha(0.8);
     }
-    // Path layer (a few tile repeats)
+
+    // === LAYER 3: distant silhouettes (slow parallax) ===
+    this.farMountains = [];
+    for (let i = 0; i < 5; i += 1) {
+      const m = this.add.triangle(120 + i * 130, 720, 0, 100, 100, -160, 200, 100, 0x1f0f3a, 0.7);
+      m.setDepth(-22);
+      this.farMountains.push(m);
+    }
+
+    // === LAYER 4: foreground silhouettes — closer trees pass faster ===
+    this.foreLayer = window.GameFeel.parallaxLayer(this, {
+      depth: -18, speed: 80, direction: 'left', spacing: 240,
+      count: 5,
+      factory: () => {
+        const x = W + Math.random() * 200;
+        return this.add.triangle(x, HERO_Y + 60, 0, 80, 40, -120, 80, 80, 0x0a0a0a, 0.8);
+      },
+    });
+
+    // === Path tile (the ground under hero) ===
     for (let i = 0; i < 4; i += 1) {
       const x = (i + 0.5) * (W / 4);
       if (this.textures.exists('lib:path')) {
-        this.add.image(x, HERO_Y + 80, 'lib:path').setDisplaySize(W / 4 + 4, 100);
+        this.add.image(x, HERO_Y + 80, 'lib:path').setDisplaySize(W / 4 + 4, 100).setDepth(-5);
+      } else {
+        this.add.rectangle(x, HERO_Y + 80, W / 4, 90, 0x4a3a26, 0.85).setDepth(-5);
       }
     }
+
+    // === HUDs ===
     this.score = window.EduCore.makeScoreHud(this, 24, 24);
     this.timer = window.EduCore.makeTimerHud(this, W - 24, 24, SPEC.levels[0].timeLimitSeconds, () => this.endLevel());
     this.levelHud = window.EduCore.makeLevelHud(this, W / 2, 24, 1, 5);
     this.hearts = window.EduCore.makeHeartsHud(this, 80, 90, 3);
     this.progress = window.EduCore.makeProgressBar(this, 80, 150, W - 160, 18);
-    // Hero
+
+    // === Hero ===
     if (this.textures.exists('lib:hero')) {
-      this.hero = this.add.image(120, HERO_Y, 'lib:hero').setDisplaySize(80, 120);
+      this.hero = this.add.image(140, HERO_Y, 'lib:hero').setDisplaySize(80, 120);
     } else {
-      this.hero = this.add.rectangle(120, HERO_Y, 80, 120, 0x7c3aed);
+      this.hero = this.add.rectangle(140, HERO_Y, 80, 120, 0xfbbf24).setStrokeStyle(2, 0x0a0a0a);
     }
     this.hero.setDepth(50);
-    this.startLevel(1);
+    // Bobbing idle — small vertical sine motion
+    this.tweens.add({ targets: this.hero, y: HERO_Y - 8, duration: 700, yoyo: true, repeat: -1, ease: 'sine.inOut' });
+
+    // Hero sparkle trail (follows during walks)
+    this.trailHandle = window.GameFeel.trail(this.hero);
+
+    window.GameFeel.audio.swordSlash();
+    window.GameFeel.levelStart(this, 1, LEVEL_NAMES[0]).then(() => this.startLevel(1));
   }
   startLevel(idx) {
     if (this.fork) this.fork.destroy();
@@ -93,7 +135,17 @@ class GameScene extends Phaser.Scene {
     this.attempts = 0; this.correct = 0; this.hintsUsed = 0; this.correctIds = [];
     this.queue = lvl.contentItems.slice();
     this.totalSteps = this.queue.length;
-    this.hero.x = 120;
+    this.hero.x = 140;
+    this.skyLayer.setFillStyle(LEVEL_TINTS[idx - 1] || LEVEL_TINTS[4]);
+
+    // Boss room dramatic intro at Level 5
+    if (idx === 5) {
+      window.GameFeel.audio.swordSlash();
+      window.GameFeel.flash(this, 0xfff7c0, 100);
+      window.GameFeel.shake(this, 6, 380);
+      window.GameFeel.zoomPunch(this, 0.12, 500);
+    }
+
     this.nextStep();
   }
   nextStep() {
@@ -104,28 +156,69 @@ class GameScene extends Phaser.Scene {
     const item = this.queue.shift();
     this.currentItem = item;
     this.progress.set((this.totalSteps - this.queue.length - 1) / this.totalSteps);
-    // Show fork/signpost ahead of hero
+
+    // Fork / signpost ahead of hero
     if (this.textures.exists('lib:fork')) {
       this.fork = this.add.image(W - 140, HERO_Y - 30, 'lib:fork').setDisplaySize(100, 140);
     } else {
-      this.fork = this.add.rectangle(W - 140, HERO_Y - 30, 100, 140, 0xfbbf24);
+      this.fork = this.add.rectangle(W - 140, HERO_Y - 30, 100, 140, 0xfbbf24, 0.9).setStrokeStyle(2, 0x0a0a0a);
     }
     this.fork.setDepth(40);
-    this.promptText = window.EduCore.addText(this, W / 2, 220, item.prompt, { size: '24px', origin: [0.5, 0.5], wordWrap: { width: W - 80 }, color: '#ffffff' });
+    window.GameFeel.bounceIn(this.fork, 0.4, 320);
+
+    // Dialog box with typewriter prompt
+    const dialogBg = this.add.rectangle(W / 2, 220, W - 60, 110, 0x000000, 0.7).setStrokeStyle(2, 0xfbbf24, 0.8).setDepth(40);
+    this.dialogBg = dialogBg;
+    this.promptText = window.EduCore.addText(this, W / 2, 220, '', {
+      size: '22px', color: '#ffffff', origin: [0.5, 0.5], wordWrap: { width: W - 100 },
+    });
+    this.promptText.setDepth(41);
+    // Typewriter
+    let i = 0;
+    const full = item.prompt;
+    this.typewriterDone = false;
+    const typewriter = this.time.addEvent({
+      delay: 30, loop: true,
+      callback: () => {
+        if (i >= full.length) {
+          typewriter.remove();
+          this.typewriterDone = true;
+          this.showOptions(item);
+          return;
+        }
+        i += 1;
+        this.promptText.setText(full.substring(0, i));
+      },
+    });
+    // Skip-on-tap
+    this.input.once('pointerdown', () => {
+      if (!this.typewriterDone) {
+        typewriter.remove();
+        this.promptText.setText(full);
+        this.typewriterDone = true;
+        this.showOptions(item);
+      }
+    });
+  }
+  showOptions(item) {
     const opts = Phaser.Utils.Array.Shuffle([item.answer, ...(item.distractors || []).slice(0, 3)]);
     this.options = opts.map((opt, i) => {
-      const y = 380 + i * 110;
+      const y = 410 + i * 110;
       const bg = this.textures.exists('lib:answer_panel')
         ? this.add.image(W / 2, y, 'lib:answer_panel').setDisplaySize(W - 120, 100).setInteractive({ useHandCursor: true })
         : this.add.rectangle(W / 2, y, W - 120, 100, 0x1f2937, 0.95).setStrokeStyle(2, 0x7c3aed).setInteractive({ useHandCursor: true });
-      bg.setDepth(20);
+      bg.setDepth(30);
       const conceptId = item.concepts[0];
       let icon = null;
       if (conceptId && this.textures.exists('gen:' + conceptId)) {
-        icon = this.add.image(80, y, 'gen:' + conceptId).setDisplaySize(56, 56).setDepth(21);
+        icon = this.add.image(80, y, 'gen:' + conceptId).setDisplaySize(56, 56).setDepth(31);
       }
-      const txt = window.EduCore.addText(this, W / 2 + (icon ? 30 : 0), y, opt, { size: '22px', color: '#ffffff', origin: [0.5, 0.5], wordWrap: { width: W - 200 } });
+      const txt = window.EduCore.addText(this, W / 2 + (icon ? 30 : 0), y, opt, {
+        size: '22px', color: '#ffffff', origin: [0.5, 0.5], wordWrap: { width: W - 200 },
+      });
+      txt.setDepth(32);
       bg.on('pointerup', () => this.choose(opt, bg));
+      window.GameFeel.bounceIn(bg, 0.5, 240);
       return { bg, icon, txt, opt };
     });
   }
@@ -134,23 +227,42 @@ class GameScene extends Phaser.Scene {
     this.attempts += 1;
     const correct = opt === this.currentItem.answer;
     if (correct) {
-      this.correct += 1; this.correctIds.push(this.currentItem.id);
+      this.correct += 1;
+      this.correctIds.push(this.currentItem.id);
       this.score.add(10);
-      window.EduCore.showCorrect(this, W / 2, 300, 10);
-      bg.setFillStyle && bg.setFillStyle(0x065f46);
       this.locked = true;
-      // Walk hero forward
+      // Visual: correct path lights up
+      bg.setFillStyle(0x065f46);
+      window.GameFeel.scorePopup(this, W / 2, 360, '+10', this.combo >= 3 ? 0xfbbf24 : 0xffffff);
+      window.GameFeel.audio.correctChain(this.combo);
+      if (this.combo >= 3) window.GameFeel.comboPopup(this, W / 2, H * 0.45, this.combo);
+      window.GameFeel.celebrate(this, W / 2, 360, Math.min(3 + this.combo, 7));
+      // Hero walks forward
       const targetX = Math.min(W - 200, this.hero.x + 110);
-      this.tweens.add({ targets: this.hero, x: targetX, duration: 520, ease: 'sine.inOut', onComplete: () => {
-        this.locked = false;
-        this.nextStep();
-      }});
+      window.GameFeel.audio.woosh();
+      this.tweens.add({
+        targets: this.hero, x: targetX,
+        duration: 540, ease: 'sine.inOut',
+        onComplete: () => { this.locked = false; this.nextStep(); },
+      });
+      window.GameFeel.squashStretch(this.hero, 'y', 0.10, 300);
+      this.combo += 1;
     } else {
       this.hearts.lose();
-      bg.setFillStyle && bg.setFillStyle(0x7f1d1d);
-      window.EduCore.showWrong(this, W / 2, 300, this.currentItem.explanationOnWrong);
-      this.cameras.main.shake(140, 0.005);
-      this.time.delayedCall(900, () => this.nextStep());
+      this.combo = 1;
+      bg.setFillStyle(0x7f1d1d);
+      // DEAD END / MONSTER briefly appears on wrong path
+      const monster = window.EduCore.addText(this, W / 2, 380, '⚠ DEAD END', {
+        size: '34px', color: '#dc2626', origin: [0.5, 0.5],
+      });
+      monster.setDepth(85);
+      window.GameFeel.bounceIn(monster, 0.2, 280);
+      this.tweens.add({ targets: monster, alpha: 0, duration: 600, delay: 800, onComplete: () => monster.destroy() });
+      window.GameFeel.audio.impact();
+      window.GameFeel.shake(this, 4, 280);
+      window.GameFeel.punish(this);
+      window.EduCore.showWrong(this, W / 2, 320, this.currentItem.explanationOnWrong);
+      this.time.delayedCall(1100, () => this.nextStep());
     }
   }
   endLevel() {
@@ -166,18 +278,21 @@ class GameScene extends Phaser.Scene {
       attemptedItems: lvl.contentItems, correctItems: this.correctIds,
     });
     window.EduMindAPI.reportLevel(this.currentLevel, res.score, res.accuracy, res.durationMs);
-    const delta = res.nextLevel - this.currentLevel;
-    window.EduCore.showLevelComplete(this, { score: res.score, accuracy: res.accuracy, delta }, () => {
+    window.GameFeel.audio.levelUp();
+    window.GameFeel.levelEnd(this, this.score.value(), res.accuracy, () => {
       this.endingLevel = false;
       if (res.stopReason) { this.finish(); return; }
-      this.startLevel(res.nextLevel);
+      window.GameFeel.levelStart(this, res.nextLevel, LEVEL_NAMES[res.nextLevel - 1] || 'QUEST ' + res.nextLevel).then(() => this.startLevel(res.nextLevel));
     });
   }
   finish() {
     const summary = engine.buildSummary();
     window.EduMindAPI.reportSummary(summary);
     window.EduMindAPI.reportComplete(summary.totalScore, summary.masteryAchieved, summary.durationSeconds);
-    this.scene.start('EndScene');
+    if (this.trailHandle) this.trailHandle.stop();
+    window.GameFeel.audio.stopMusic();
+    window.GameFeel.irisClose(this, this.hero.x, this.hero.y, 600);
+    this.time.delayedCall(620, () => this.scene.start('EndScene'));
   }
 }
 class EndScene extends (window.EduCore.buildEndScene(() => engine.buildSummary(), () => location.reload(), () => window.EduMindAPI.reportEvent('exit', {}))) {}

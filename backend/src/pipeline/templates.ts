@@ -28,6 +28,14 @@ export async function loadEduCore(): Promise<string> {
   return raw;
 }
 
+export async function loadGameFeel(): Promise<string> {
+  const hit = cache.get('gamefeel');
+  if (hit) return hit;
+  const raw = await readFile(join(CLIENT_DIR, 'GameFeel.js'), 'utf8');
+  cache.set('gamefeel', raw);
+  return raw;
+}
+
 export async function loadArabicFontBase64(): Promise<string> {
   const hit = cache.get('font');
   if (hit) return hit;

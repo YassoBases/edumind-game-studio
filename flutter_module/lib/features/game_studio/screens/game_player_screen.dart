@@ -14,7 +14,11 @@ import 'game_player_web_stub.dart' if (dart.library.html) 'game_player_web.dart'
 class GamePlayerScreen extends StatefulWidget {
   final GameStudioApi api;
   final GeneratedGame game;
-  const GamePlayerScreen({super.key, required this.api, required this.game});
+  /// Optional offline-library handle so bridge events can record bestScore on session end.
+  /// Pass through from the home/dashboard or library screen.
+  // Untyped to keep this file independent of game_database.dart at the import level.
+  final dynamic db;
+  const GamePlayerScreen({super.key, required this.api, required this.game, this.db});
 
   @override
   State<GamePlayerScreen> createState() => _GamePlayerScreenState();
@@ -42,6 +46,12 @@ class _GamePlayerScreenState extends State<GamePlayerScreen> {
       web.registerStatusCallback((msg) {
         if (!mounted) return;
         setState(() => _iframeStatus = msg);
+      });
+      // Bridge: when the inner game calls window.parent.postMessage, route those events
+      // through the SAME handler the native WebView channel uses. This is how level / summary
+      // / complete writes back to the cloud library on web builds.
+      web.registerBridge((jsonPayload) {
+        _onBridge(JavaScriptMessage(message: jsonPayload));
       });
       // Point the iframe at the backend's /play endpoint so we get a real navigable URL
       // (way more reliable than srcdoc for large HTML).
@@ -82,6 +92,17 @@ class _GamePlayerScreenState extends State<GamePlayerScreen> {
           if (data != null) _summaryPayload = data;
           break;
         case 'complete':
+          // Persist the final score into the offline library if a db handle was passed in.
+          // The complete event payload is { score, won, time }.
+          if (widget.db != null && data != null) {
+            final scoreRaw = data['score'];
+            final score = scoreRaw is num ? scoreRaw.round() : 0;
+            try {
+              // The Drift-or-stub database both expose `recordPlay(id, score)`.
+              unawaited((widget.db.recordPlay(widget.game.gameId, score) as Future<void>?) ??
+                  Future<void>.value());
+            } catch (_) {/* db handle missing or wrong shape — ignore */}
+          }
           if (_summaryPayload != null) {
             unawaited(widget.api.reportComplete(
               gameId: widget.game.gameId,

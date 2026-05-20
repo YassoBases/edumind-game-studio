@@ -227,6 +227,29 @@ function v_rtl_support_if_arabic(ctx: ValidatorContext): ValidatorResult {
   return { name: 'rtl_support_if_arabic', ok: true, signature: 'rtl:ok', detail: 'all text RTL-aware' };
 }
 
+function v_uses_gamefeel(ctx: ValidatorContext): ValidatorResult {
+  // Require generated games to actually use the juice library. We look for at least
+  // 5 distinct GameFeel.* method invocations across the script (composite or atomic).
+  // This catches LLMs that ignore the runtime and roll their own primitives.
+  const matches = Array.from(ctx.innerScript.matchAll(/GameFeel\.(?:audio\.)?([a-zA-Z_]+)\s*\(/g));
+  const distinct = new Set<string>();
+  for (const m of matches) distinct.add(m[1] ?? '');
+  if (matches.length < 5 || distinct.size < 3) {
+    return {
+      name: 'uses_gamefeel',
+      ok: false,
+      signature: matches.length === 0 ? 'no_gamefeel_calls' : `gamefeel_low:${matches.length}:${distinct.size}`,
+      detail: `Found ${matches.length} GameFeel calls across ${distinct.size} distinct methods (need ≥5 calls, ≥3 distinct)`,
+    };
+  }
+  return {
+    name: 'uses_gamefeel',
+    ok: true,
+    signature: 'gamefeel:ok',
+    detail: `${matches.length} calls across ${distinct.size} distinct methods`,
+  };
+}
+
 function v_sprite_assets_referenced_exist(ctx: ValidatorContext): ValidatorResult {
   // Inspect inner-script for references to EduSprites.library.X or EduSprites.generated.X
   // and confirm every referenced key exists in the assembled manifest. If no manifest is
@@ -285,6 +308,7 @@ export const VALIDATORS: Validator[] = [
   v_language_consistency,
   v_rtl_support_if_arabic,
   v_sprite_assets_referenced_exist,
+  v_uses_gamefeel,
 ];
 
 export function runValidators(ctx: ValidatorContext): ValidatorResult[] {

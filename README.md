@@ -1,8 +1,12 @@
 # EduMind AI Game Studio
 
-> A student types what they want to learn. ~30 seconds later they're playing a custom
+> A student types what they want to learn. **1–9 minutes** later they're playing a custom
 > Phaser 4 mini-game on their phone that adapts to their performance and gives them a
 > structured learning summary at the end.
+>
+> Latency varies with cache state (cold-start spec calls take ~50–90 s; hot-cache repeats
+> are ~15–30 s) and whether AI image generation is enabled (+15–25 s and ~2¢). See
+> [PERF.md](PERF.md) for measured per-stage breakdowns.
 
 Built for grades 7–12. English and Arabic, full RTL. The LLM never invents game mechanics —
 six pedagogical templates and four richer archetypes do, and validators+repair guarantee

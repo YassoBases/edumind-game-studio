@@ -30,6 +30,61 @@ void registerStatusCallback(IframeStatusCallback cb) {
   _statusCallback = cb;
 }
 
+// Bridge: forwards game-side EduMindAPI events from the iframe (via window.postMessage)
+// to the same handler the native WebView channel uses. Set up once per player screen.
+typedef IframeBridgeCallback = void Function(String jsonPayload);
+IframeBridgeCallback? _bridgeCallback;
+html.EventListener? _messageListener;
+void registerBridge(IframeBridgeCallback cb) {
+  _bridgeCallback = cb;
+  if (_messageListener != null) return;
+  _messageListener = (html.Event e) {
+    final me = e as html.MessageEvent;
+    final data = me.data;
+    if (data is! Map) return;
+    if (data['source'] != 'EduMind') return;
+    final payload = data['payload'];
+    if (payload is! Map) return;
+    try {
+      _bridgeCallback?.call(jsonEncodeShim(payload));
+    } catch (_) {/* ignore */}
+  };
+  html.window.addEventListener('message', _messageListener);
+}
+
+// Tiny JSON encoder shim so we don't pull in dart:convert at the web entry just for this.
+String jsonEncodeShim(Map<dynamic, dynamic> m) {
+  final buf = StringBuffer('{');
+  var first = true;
+  m.forEach((k, v) {
+    if (!first) buf.write(',');
+    first = false;
+    buf.write('"$k":');
+    _writeValue(buf, v);
+  });
+  buf.write('}');
+  return buf.toString();
+}
+
+void _writeValue(StringBuffer buf, dynamic v) {
+  if (v == null) buf.write('null');
+  else if (v is num) buf.write(v.toString());
+  else if (v is bool) buf.write(v.toString());
+  else if (v is String) buf.write('"${v.replaceAll(r'\', r'\\').replaceAll('"', r'\"')}"');
+  else if (v is List) {
+    buf.write('[');
+    for (var i = 0; i < v.length; i++) {
+      if (i > 0) buf.write(',');
+      _writeValue(buf, v[i]);
+    }
+    buf.write(']');
+  } else if (v is Map) {
+    buf.write(jsonEncodeShim(v));
+  } else {
+    buf.write('"${v.toString().replaceAll('"', r'\"')}"');
+  }
+}
+
 void _emit(String gameId, String msg) {
   final s = _state[gameId];
   final flags = s == null

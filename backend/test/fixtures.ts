@@ -49,6 +49,11 @@ class GameScene extends Phaser.Scene {
   create() {
     const score = window.EduCore.makeScoreHud(this, 24, 24);
     const timer = window.EduCore.makeTimerHud(this, 696, 24, 60);
+    window.GameFeel.levelStart(this, 1, 'Begin');
+    window.GameFeel.scorePopup(this, 360, 640, '+10', 0xfbbf24);
+    window.GameFeel.celebrate(this, 360, 640, 3);
+    window.GameFeel.audio.correctChain(2);
+    window.GameFeel.levelEnd(this, 100, 0.8, () => {});
     window.EduMindAPI.reportLevel(1, 0.8, 0.8, 1000);
     window.EduMindAPI.reportSummary({});
     window.EduMindAPI.reportComplete(0, true, 0);

@@ -1,5 +1,5 @@
 import { env } from '../env.ts';
-import { loadArabicFontBase64, loadEduCore, loadPhaserBundle, PHASER_CDN } from './templates.ts';
+import { loadArabicFontBase64, loadEduCore, loadGameFeel, loadPhaserBundle, PHASER_CDN } from './templates.ts';
 
 export type ScaffoldInput = {
   language: 'en' | 'ar';
@@ -25,7 +25,17 @@ window.EduMindAPI = {
   reportComplete: (score,won,time) => post({event:'complete', data:{score,won,time}}),
   reportEvent:    (n,d) => post({event:'custom', name:n, data:d}),
 };
-function post(p){ try { window.EduMind && window.EduMind.postMessage(JSON.stringify(p)); } catch(e) {} }
+function post(p){
+  // Native WebView channel (Android/iOS) — webview_flutter receives this.
+  try { window.EduMind && window.EduMind.postMessage(JSON.stringify(p)); } catch(e) {}
+  // Web iframe channel — forward to the parent window so the Dart-side iframe-listener
+  // can route into the same _onBridge handler the native channel uses.
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ source: 'EduMind', payload: p }, '*');
+    }
+  } catch(e) {}
+}
 document.addEventListener('touchstart', function unlock(){
   try{(new (window.AudioContext||window.webkitAudioContext)()).resume();}catch(e){}
   document.removeEventListener('touchstart',unlock);
@@ -36,8 +46,9 @@ window.EduCore && window.EduCore.setLanguage('${lang}');
 export async function wrapInScaffold(input: ScaffoldInput): Promise<string> {
   const lang = input.language;
   const dir = lang === 'ar' ? 'rtl' : 'ltr';
-  const [eduCore, phaserBundle, arabicFont] = await Promise.all([
+  const [eduCore, gameFeel, phaserBundle, arabicFont] = await Promise.all([
     loadEduCore(),
+    loadGameFeel(),
     loadPhaserBundle(),
     loadArabicFontBase64(),
   ]);
@@ -66,6 +77,7 @@ ${fontFace}
 <div id="game-container"></div>
 ${phaserTag}
 <script>${eduCore}</script>
+<script>${gameFeel}</script>
 <script>${spriteScript}</script>
 <script>${BRIDGE_SCRIPT(lang)}</script>
 <script>

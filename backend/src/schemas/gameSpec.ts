@@ -63,6 +63,7 @@ export const GameSpec = z
       palette: z.tuple([z.string(), z.string(), z.string(), z.string()]),
       accent: z.string(),
     }),
+    visualMood: z.enum(['energetic', 'cinematic', 'minimal', 'playful', 'dramatic']).optional(),
     audioCues: z.array(z.enum(['correct', 'wrong', 'win', 'lose', 'tick', 'levelUp'])),
   })
   .refine((s) => s.levels.reduce((sum, l) => sum + l.contentItems.length, 0) >= 25, {

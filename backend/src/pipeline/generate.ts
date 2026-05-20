@@ -304,39 +304,48 @@ export async function runGenerationPipeline(
     });
   }
 
+  // Parallelize playability + post-moderation — both are ~0.5-5s, both read-only against
+  // the assembled HTML and the spec content. They were sequential before.
   const playabilityErrors: string[] = [];
-  if (shouldRunPlayability()) {
-    const tPlay = emitStart('playability', 'Test-driving the game');
-    const play = await runPlayabilityCheck(html, language);
-    emitEnd('playability', 'Test-driving the game', tPlay, { ok: play.ok });
-    if (!play.ok) {
-      logger.warn({ errors: play.errors }, 'playability.failed');
-      const repairRes = await providers.generation.generateRepair(
-        html,
-        `Playwright runtime errors:\n${play.errors.join('\n')}\nFix without changing scenes or removing EduCore.`,
-        true,
-      );
-      html = repairRes.html;
-      totalUsage = addUsage(totalUsage, repairRes.usage);
-      runningCostMicroUsd += llmCallMicroUsd(repairRes.usage);
-      innerScript = extractInnerScript(html) ?? innerScript;
-      const re = await runPlayabilityCheck(html, language);
-      if (!re.ok) playabilityErrors.push(...re.errors);
-    }
-  }
-
-  const tPostMod = emitStart('moderation_post', 'Final safety check');
   const renderedSample = spec.levels
     .flatMap((l) => l.contentItems.flatMap((it) => [it.prompt, it.explanationOnWrong]))
     .slice(0, 50)
     .join('\n');
-  const postCheck = await providers.moderation.check(renderedSample, language);
-  emitEnd('moderation_post', 'Final safety check', tPostMod);
+  const tPlay = emitStart('playability', 'Test-driving the game');
+  const tPostMod = emitStart('moderation_post', 'Final safety check');
+  const playP = shouldRunPlayability()
+    ? runPlayabilityCheck(html, language).then((r) => {
+        emitEnd('playability', 'Test-driving the game', tPlay, { ok: r.ok });
+        return r;
+      })
+    : Promise.resolve({ ok: true, signature: 'skipped', errors: [] as string[], warnings: [] as string[] }).then((r) => {
+        emitEnd('playability', 'Test-driving the game', tPlay, { skipped: true });
+        return r;
+      });
+  const postModP = providers.moderation.check(renderedSample, language).then((r) => {
+    emitEnd('moderation_post', 'Final safety check', tPostMod);
+    return r;
+  });
+  const [play, postCheck] = await Promise.all([playP, postModP]);
   if (!postCheck.safe) {
     throw Object.assign(new Error('Generated content failed moderation'), {
       statusCode: 422,
       categories: postCheck.categories,
     });
+  }
+  if (!play.ok) {
+    logger.warn({ errors: play.errors }, 'playability.failed');
+    const repairRes = await providers.generation.generateRepair(
+      html,
+      `Playwright runtime errors:\n${play.errors.join('\n')}\nFix without changing scenes or removing EduCore.`,
+      true,
+    );
+    html = repairRes.html;
+    totalUsage = addUsage(totalUsage, repairRes.usage);
+    runningCostMicroUsd += llmCallMicroUsd(repairRes.usage);
+    innerScript = extractInnerScript(html) ?? innerScript;
+    const re = await runPlayabilityCheck(html, language);
+    if (!re.ok) playabilityErrors.push(...re.errors);
   }
 
   emit({ stage: 'done', label: 'Ready', status: 'end', costMicroUsd: runningCostMicroUsd });

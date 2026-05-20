@@ -50,7 +50,10 @@ gen.json
 compose*.json
 backend/generated-game.html
 backend/lane-racer-photosynthesis.html
-backend/scripts/
+# Per-run smoke scripts that don't belong upstream
+backend/scripts/verify-game.mjs
+# Generated corpus output dir (HTMLs live here after running the corpus script)
+backend/corpus/
 
 # ---- Sprite assets (drop your Kenney PNGs in; we don't commit binary art here) ----
 backend/sprites/library/**/*.png
