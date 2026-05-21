@@ -362,9 +362,15 @@ export async function runGenerationPipeline(
   }
   if (!play.ok) {
     logger.warn({ errors: play.errors }, 'playability.failed');
+    // The "duplicate key" error is almost always EndScene extending
+    // buildGameSceneSkeleton (which already registers itself as 'GameScene').
+    // Steer the model toward the correct fix instead of just listing the error.
+    const duplicateSceneHint = play.errors.some((e) => /duplicate key/i.test(e))
+      ? '\n\nIMPORTANT: Phaser is rejecting two scenes with the same key. EduCore.buildGameSceneSkeleton() returns a class whose key is "GameScene" — never use it as the base class for EndScene or MenuScene. EndScene should `extends Phaser.Scene` with `super("EndScene")`; MenuScene should be created via `window.EduCore.buildMenuScene(SPEC)`.'
+      : '';
     const repairRes = await providers.generation.generateRepair(
       html,
-      `Playwright runtime errors:\n${play.errors.join('\n')}\nFix without changing scenes or removing EduCore.`,
+      `Playwright runtime errors:\n${play.errors.join('\n')}\nFix without changing scenes or removing EduCore.${duplicateSceneHint}`,
       true,
     );
     html = repairRes.html;
@@ -372,7 +378,16 @@ export async function runGenerationPipeline(
     runningCostMicroUsd += llmCallMicroUsd(repairRes.usage);
     innerScript = extractInnerScript(html) ?? innerScript;
     const re = await runPlayabilityCheck(html, language);
-    if (!re.ok) playabilityErrors.push(...re.errors);
+    if (!re.ok) {
+      playabilityErrors.push(...re.errors);
+      logger.error({ errors: re.errors }, 'playability.failed_after_repair');
+      throw Object.assign(
+        new Error(
+          `Generated game has unfixable runtime errors. The model produced code Phaser can't run; try again with a fresh prompt. Errors: ${re.errors.slice(0, 3).join(' | ')}`,
+        ),
+        { statusCode: 422, playabilityErrors: re.errors },
+      );
+    }
   }
 
   emit({ stage: 'done', label: 'Ready', status: 'end', costMicroUsd: runningCostMicroUsd });

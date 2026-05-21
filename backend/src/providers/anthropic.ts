@@ -19,6 +19,56 @@ function cc(): CacheControl {
   return { type: 'ephemeral', ttl: env().EDUMIND_GENERATION_CACHE_TTL };
 }
 
+// Repair sees a scaffolded HTML doc that includes the inlined Phaser engine (~1.35 MB),
+// EduCore/GameFeel/Mascot libs (~80 KB), and a base64 sprite manifest that with image
+// generation enabled can be another ~500 KB. We replace every large pre-existing <script>
+// block with a numbered marker before the LLM call and splice them back in afterwards.
+// The model only ever needs to edit the LAST <script> (the generated game's inner script),
+// so we never strip that one. Markers are documented in REFINE_SYSTEM_PROMPT.
+const SCRIPT_STRIP_MIN_BYTES = 5_000;
+
+function stripStaticScripts(html: string): { html: string; restoreMap: Map<string, string> } {
+  const restoreMap = new Map<string, string>();
+  const re = /<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g;
+  const matches: Array<{ start: number; end: number; full: string; bodyLen: number }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    matches.push({ start: m.index, end: m.index + m[0].length, full: m[0], bodyLen: m[1].length });
+  }
+  if (matches.length === 0) return { html, restoreMap };
+  const innerScriptIdx = matches.length - 1;
+  let out = html;
+  // Reverse iteration keeps earlier indices valid as we splice.
+  for (let i = matches.length - 1; i >= 0; i -= 1) {
+    if (i === innerScriptIdx) continue;
+    if (matches[i].bodyLen < SCRIPT_STRIP_MIN_BYTES) continue;
+    const marker = `<!--__EDUMIND_SCRIPT_${i}__-->`;
+    restoreMap.set(marker, matches[i].full);
+    out = out.slice(0, matches[i].start) + marker + out.slice(matches[i].end);
+  }
+  return { html: out, restoreMap };
+}
+
+function restoreStaticScripts(html: string, restoreMap: Map<string, string>): string {
+  if (restoreMap.size === 0) return html;
+  let out = html;
+  let droppedCount = 0;
+  for (const [marker, original] of restoreMap) {
+    if (out.includes(marker)) {
+      out = out.replace(marker, original);
+    } else {
+      droppedCount += 1;
+      const bodyOpen = out.indexOf('<body');
+      const insertAt = bodyOpen !== -1 ? out.indexOf('>', bodyOpen) + 1 : 0;
+      out = out.slice(0, insertAt) + original + out.slice(insertAt);
+    }
+  }
+  if (droppedCount > 0) {
+    logger.warn({ droppedCount }, 'repair.script_markers_dropped_spliced_at_body_open');
+  }
+  return out;
+}
+
 // Soft-truncate frequently-overshot string fields before validation. The cap stays meaningful
 // (so models don't write paragraphs), we just don't bounce the whole pipeline for a 30-char overshoot.
 function clip(s: unknown, max: number): unknown {
@@ -47,6 +97,14 @@ export function createAnthropicProvider(): GenerationProvider {
   // Backoff schedule for transient 529/overloaded/rate-limit errors from Anthropic.
   // Anthropic's overloaded errors are typically resolved within 10–30 seconds.
   const RETRY_DELAYS_MS = [2000, 5000, 12000, 25000];
+  // Rate-limit windows (429 / rate_limit_error) are minute-bucketed; a 2s retry just
+  // burns another quota slot. Wait long enough for the next window to open.
+  const RATE_LIMIT_RETRY_DELAYS_MS = [35_000, 65_000, 65_000];
+
+  function isRateLimitError(err: unknown): boolean {
+    const e = err as { status?: number; error?: { type?: string } };
+    return e.status === 429 || e.error?.type === 'rate_limit_error';
+  }
 
   function isRetryableAnthropicError(err: unknown): boolean {
     const e = err as { status?: number; error?: { type?: string }; message?: string };
@@ -96,10 +154,11 @@ export function createAnthropicProvider(): GenerationProvider {
         return { text, usage };
       } catch (err) {
         lastErr = err;
-        if (!isRetryableAnthropicError(err) || attempt >= RETRY_DELAYS_MS.length) {
+        const schedule = isRateLimitError(err) ? RATE_LIMIT_RETRY_DELAYS_MS : RETRY_DELAYS_MS;
+        if (!isRetryableAnthropicError(err) || attempt >= schedule.length) {
           throw err;
         }
-        const delay = RETRY_DELAYS_MS[attempt] ?? 25000;
+        const delay = schedule[attempt] ?? schedule[schedule.length - 1];
         const status = (err as { status?: number }).status ?? '?';
         const type = (err as { error?: { type?: string } }).error?.type ?? '?';
         logger.warn(
@@ -196,10 +255,12 @@ export function createAnthropicProvider(): GenerationProvider {
 
     async generateRepair(html: string, instruction: string, useFast: boolean) {
       const system = [{ type: 'text' as const, text: REFINE_SYSTEM_PROMPT, cache_control: cc() }];
-      const userText = `INSTRUCTION:\n${instruction}\n\nCURRENT_HTML:\n${html}`;
+      const { html: lean, restoreMap } = stripStaticScripts(html);
+      const userText = `INSTRUCTION:\n${instruction}\n\nCURRENT_HTML:\n${lean}`;
       const model = useFast ? fast : primary;
       const { text, usage } = await call(model, system, userText, 'repair', 24000);
-      return { html: stripFences(text), usage };
+      const repaired = restoreStaticScripts(stripFences(text), restoreMap);
+      return { html: repaired, usage };
     },
 
     async generateFeedback(summary: Summary, language: 'en' | 'ar') {

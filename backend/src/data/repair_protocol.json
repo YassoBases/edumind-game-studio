@@ -2,8 +2,8 @@
   "entries": [
     {
       "signature": "browser_storage:localStorage",
-      "occurrences": 1,
-      "last_seen": "2026-05-15T00:00:00.000Z",
+      "occurrences": 9,
+      "last_seen": "2026-05-21T14:18:32.323Z",
       "root_cause": "Model wrote localStorage.setItem/getItem for persistence; WebView blocks these in some configurations and they are banned by spec.",
       "fix_template": "Remove every localStorage/sessionStorage/cookie/indexedDB reference. The game must hold state only in memory; persistence is handled by Flutter via the bridge.",
       "auto_patch": {
@@ -158,8 +158,8 @@
     },
     {
       "signature": "raw_buttons:no_candy",
-      "occurrences": 1,
-      "last_seen": "2026-05-21T00:00:00.000Z",
+      "occurrences": 4,
+      "last_seen": "2026-05-21T13:18:53.665Z",
       "root_cause": "Generated game creates interactive UI buttons via raw setInteractive() + scene.add.rectangle, instead of using the GameFeel.candyButton primitive (the signature Duolingo-style button).",
       "fix_template": "Replace every UI button (Start, Continue, Retry, Next, etc.) with: const btn = window.GameFeel.candyButton(scene, x, y, w, h, 'Label', { variant: 'green', onTap: () => { ... } }); — Variants: green for primary CTAs, blue for secondary, yellow for special/XP, red for danger/skip, outline for tertiary. Do NOT use raw scene.add.rectangle + setInteractive for UI buttons.",
       "verified": true
@@ -215,6 +215,22 @@
       "last_seen": "2026-05-19T15:21:31.371Z",
       "root_cause": "Auto-captured: fontSize 19px below 24px (language en)",
       "fix_template": "SIGNATURE: font_small:19\nUNKNOWN — diagnose and fix.\nDETAIL: fontSize 19px below 24px (language en)",
+      "verified": false
+    },
+    {
+      "signature": "external_resource:https://phaser.io/",
+      "occurrences": 6,
+      "last_seen": "2026-05-21T14:18:34.133Z",
+      "root_cause": "Auto-captured: External resources: https://phaser.io/, ///+nxBvIAAAAAXRSTlMAQObYZgAAABVJREFUeF7NwIEAAAAAgKD9qdeocAMAoAABm3DkcAAAAABJRU5ErkJggg==, //Mt1ESmgh+DFmE2GPOBARKb2NVjo+17PXLD8a1+pl5+A+wSgFygymWYHBb0FtsKhJDdZlncG2IzJ4ayoMDv20wTmSMzClEgbWYNTAkQ0Z+OJ+A/eWnAaR9+oxCF4Os0H8htsMUp+pwcgBBiMNnAwF8GqIgL2hAzaGFFgZauDPKABmowZ4GL369/0rwACp2yA/ttmvsQAAAABJRU5ErkJggg==",
+      "fix_template": "SIGNATURE: external_resource:https://phaser.io/\nUNKNOWN — diagnose and fix.\nDETAIL: External resources: https://phaser.io/, ///+nxBvIAAAAAXRSTlMAQObYZgAAABVJREFUeF7NwIEAAAAAgKD9qdeocAMAoAABm3DkcAAAAABJRU5ErkJggg==, //Mt1ESmgh+DFmE2GPOBARKb2NVjo+17PXLD8a1+pl5+A+wSgFygymWYHBb0FtsKhJDdZlncG2IzJ4ayoMDv20wTmSMzClEgbWYNTAkQ0Z+OJ+A/eWnAaR9+oxCF4Os0H8htsMUp+pwcgBBiMNnAwF8GqIgL2hAzaGFFgZauDPKABmowZ4GL369/0rwACp2yA/ttmvsQAAAABJRU5ErkJggg==\n\n---\n\nSIGNATURE: raw_buttons:no_candy\nROOT CAUSE: Generated game creates interactive UI buttons via raw setInteractive() + scene.add.rectangle, instead of using the GameFeel.candyButton primitive (the signature Duolingo-style button).\nFIX: Replace every UI button (Start, Continue, Retry, Next, etc.) with: const btn = window.GameFeel.candyButton(scene, x, y, w, h, 'Label', { variant: 'green', onTap: () => { ... } }); — Variants: green for primary CTAs, blue for secondary, yellow for special/XP, red for danger/skip, outline for tertiary. Do NOT use raw scene.add.rectangle + setInteractive for UI buttons.\nDETAIL: Game uses setInteractive buttons but never calls GameFeel.candyButton\n\n---\n\nSIGNATURE: educore_factories_low:2\nUNKNOWN — diagnose and fix.\nDETAIL: Only 2 distinct EduCore factory references found (need ≥3 of buildPhaserConfig / buildBridgeWiring / makeHud / buildLevelLoop / buildGameSceneSkeleton)",
+      "verified": false
+    },
+    {
+      "signature": "educore_factories_low:2",
+      "occurrences": 1,
+      "last_seen": "2026-05-21T13:18:51.434Z",
+      "root_cause": "Auto-captured: Only 2 distinct EduCore factory references found (need ≥3 of buildPhaserConfig / buildBridgeWiring / makeHud / buildLevelLoop / buildGameSceneSkeleton)",
+      "fix_template": "SIGNATURE: external_resource:https://phaser.io/\nUNKNOWN — diagnose and fix.\nDETAIL: External resources: https://phaser.io/, ///+nxBvIAAAAAXRSTlMAQObYZgAAABVJREFUeF7NwIEAAAAAgKD9qdeocAMAoAABm3DkcAAAAABJRU5ErkJggg==, //Mt1ESmgh+DFmE2GPOBARKb2NVjo+17PXLD8a1+pl5+A+wSgFygymWYHBb0FtsKhJDdZlncG2IzJ4ayoMDv20wTmSMzClEgbWYNTAkQ0Z+OJ+A/eWnAaR9+oxCF4Os0H8htsMUp+pwcgBBiMNnAwF8GqIgL2hAzaGFFgZauDPKABmowZ4GL369/0rwACp2yA/ttmvsQAAAABJRU5ErkJggg==\n\n---\n\nSIGNATURE: raw_buttons:no_candy\nROOT CAUSE: Generated game creates interactive UI buttons via raw setInteractive() + scene.add.rectangle, instead of using the GameFeel.candyButton primitive (the signature Duolingo-style button).\nFIX: Replace every UI button (Start, Continue, Retry, Next, etc.) with: const btn = window.GameFeel.candyButton(scene, x, y, w, h, 'Label', { variant: 'green', onTap: () => { ... } }); — Variants: green for primary CTAs, blue for secondary, yellow for special/XP, red for danger/skip, outline for tertiary. Do NOT use raw scene.add.rectangle + setInteractive for UI buttons.\nDETAIL: Game uses setInteractive buttons but never calls GameFeel.candyButton\n\n---\n\nSIGNATURE: educore_factories_low:2\nUNKNOWN — diagnose and fix.\nDETAIL: Only 2 distinct EduCore factory references found (need ≥3 of buildPhaserConfig / buildBridgeWiring / makeHud / buildLevelLoop / buildGameSceneSkeleton)",
       "verified": false
     }
   ]

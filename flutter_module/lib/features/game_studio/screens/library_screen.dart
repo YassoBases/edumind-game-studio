@@ -125,10 +125,32 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
+  Future<void> _openCloudGame(GameSummary g) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator(color: EduTheme.accentCoral)),
+    );
+    try {
+      final game = await widget.api.getGame(g.id);
+      if (!mounted) return;
+      navigator.pop(); // dismiss the loading dialog
+      navigator.push(MaterialPageRoute(
+        builder: (_) => GamePlayerScreen(api: widget.api, game: game, db: widget.db),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      navigator.pop();
+      messenger.showSnackBar(SnackBar(content: Text('Could not open game: $e')));
+    }
+  }
+
   Widget _cloudCard(GameSummary g, int idx, DateFormat fmt) {
     return GlassCard(
       padding: const EdgeInsets.all(14),
-      onTap: () {},
+      onTap: () => _openCloudGame(g),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

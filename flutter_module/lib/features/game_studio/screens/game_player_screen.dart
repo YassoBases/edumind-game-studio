@@ -29,6 +29,7 @@ class _GamePlayerScreenState extends State<GamePlayerScreen> {
   Map<String, dynamic>? _summaryPayload;
   bool _shouldPop = false;
   String _iframeStatus = 'initializing';
+  bool _iframeReady = false;
 
   @override
   void initState() {
@@ -46,6 +47,11 @@ class _GamePlayerScreenState extends State<GamePlayerScreen> {
       web.registerStatusCallback((msg) {
         if (!mounted) return;
         setState(() => _iframeStatus = msg);
+      });
+      // Fade the loading overlay out the moment the iframe finishes loading.
+      web.registerLoadedCallback(() {
+        if (!mounted) return;
+        setState(() => _iframeReady = true);
       });
       // Bridge: when the inner game calls window.parent.postMessage, route those events
       // through the SAME handler the native WebView channel uses. This is how level / summary
@@ -197,9 +203,42 @@ class _GamePlayerScreenState extends State<GamePlayerScreen> {
                 // Force the iframe / WebView to take the entire remaining body space. Without
                 // an explicit size, HtmlElementView's platform slot collapses to 0x0 on web.
                 child: SizedBox.expand(
-                  child: kIsWeb
-                      ? web.buildGameIframe(widget.game.gameId)
-                      : WebViewWidget(controller: _controller!),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      kIsWeb
+                          ? web.buildGameIframe(widget.game.gameId)
+                          : WebViewWidget(controller: _controller!),
+                      if (kIsWeb && !_iframeReady)
+                        Container(
+                          color: const Color(0xFF0B1020),
+                          alignment: Alignment.center,
+                          child: const Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                width: 48,
+                                height: 48,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white70,
+                                  strokeWidth: 3,
+                                ),
+                              ),
+                              SizedBox(height: 16),
+                              Text(
+                                'Loading game…',
+                                style: TextStyle(color: Colors.white70, fontSize: 14),
+                              ),
+                              SizedBox(height: 6),
+                              Text(
+                                'First load can take 20–40 s (sprites + engine).',
+                                style: TextStyle(color: Color(0xFF7C86A8), fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),

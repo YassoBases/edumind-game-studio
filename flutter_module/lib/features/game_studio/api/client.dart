@@ -254,6 +254,24 @@ class GameStudioApi {
     return (payload, enrJson == null ? null : SummaryEnrichment.fromJson(enrJson), ready);
   }
 
+  /// Fetch a single game (incl. HTML) from the cloud library so it can be replayed.
+  Future<GeneratedGame> getGame(String gameId) async {
+    final res = await _client.get(
+      Uri.parse('$baseUrl/api/games/$gameId'),
+      headers: _headers,
+    );
+    if (res.statusCode >= 400) {
+      throw Exception('Game fetch failed: ${res.statusCode} ${res.body}');
+    }
+    final j = jsonDecode(res.body) as Map<String, dynamic>;
+    return GeneratedGame(
+      gameId: j['gameId'] as String,
+      orientation: (j['orientation'] as String?) ?? 'portrait',
+      language: (j['language'] as String?) ?? 'en',
+      html: j['html'] as String,
+    );
+  }
+
   Future<List<GameSummary>> library() async {
     final res = await _client.get(
       Uri.parse('$baseUrl/api/games/library'),

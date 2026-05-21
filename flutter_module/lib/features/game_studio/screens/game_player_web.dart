@@ -30,6 +30,14 @@ void registerStatusCallback(IframeStatusCallback cb) {
   _statusCallback = cb;
 }
 
+// Fires once with `true` when the iframe finishes loading. The host uses this to
+// fade out its loading overlay.
+typedef IframeLoadedCallback = void Function();
+IframeLoadedCallback? _loadedCallback;
+void registerLoadedCallback(IframeLoadedCallback cb) {
+  _loadedCallback = cb;
+}
+
 // Bridge: forwards game-side EduMindAPI events from the iframe (via window.postMessage)
 // to the same handler the native WebView channel uses. Set up once per player screen.
 typedef IframeBridgeCallback = void Function(String jsonPayload);
@@ -133,6 +141,7 @@ void registerGameIframe(String gameId, String backendUrl) {
       s.heightOnLoad = iframe.clientHeight;
       _emit(gameId,
           'iframe loaded (${iframe.clientWidth}x${iframe.clientHeight}) at ${s.loadedAt!.toIso8601String()}');
+      _loadedCallback?.call();
     });
     iframe.onError.listen((e) {
       s.error = e.toString();

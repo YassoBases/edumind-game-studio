@@ -150,7 +150,13 @@ more distractors, tighter time limits) — never by physical impossibility.
 
 # ===== Hard correctness rules (validators will reject violations) =====
 
-1. Three Phaser scenes only: MenuScene, GameScene, EndScene.
+1. Three Phaser scenes only: MenuScene, GameScene, EndScene. Each must have a UNIQUE
+   Phaser key (\`super('MenuScene')\`, \`super('GameScene')\`, \`super('EndScene')\`).
+   NEVER make EndScene extend the return value of \`window.EduCore.buildGameSceneSkeleton(...)\`
+   — that factory returns a class whose key is already \`'GameScene'\`, so any subclass
+   collides with the real GameScene and Phaser refuses to start with "Cannot add Scene with
+   duplicate key: GameScene". \`buildGameSceneSkeleton\` is for GameScene only. EndScene
+   should be a plain \`class EndScene extends Phaser.Scene { constructor() { super('EndScene'); } create() { ... } }\`.
 2. GameScene runs all 5 levels in a single scene by swapping content. No transitions
    between levels.
 3. Use EduCore primitives for HUDs, audio cues, i18n, adaptive engine. Use GameFeel for

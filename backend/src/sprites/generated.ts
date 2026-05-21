@@ -19,9 +19,12 @@ export type GeneratedSpriteSet = Record<string, string>; // conceptId → base64
 const MAX_SPRITES_PER_GAME = 7; // 6 concept icons + 1 background
 const MAX_USD_MILLICENTS_PER_GAME = 15_000; // 15¢ in millicents (1 dollar = 100_000 millicents)
 
-// Approx cost per Flux Schnell image — $0.003 on fal.ai as of May 2026.
-// Fudge factor for safety: bill 300 millicents (0.3¢) per image so 6 images = 1.8¢ << 15¢ cap.
-const MILLICENTS_PER_IMAGE = 300;
+// Per-image cost estimate in millicents (1¢ = 1000 millicents).
+//  - Flux Schnell (fal.ai/replicate): ~$0.003
+//  - OpenAI gpt-image-1 low quality:  ~$0.011 (square) – $0.016 (portrait)
+// We bill against the highest of these so the budget cap holds across providers:
+// 1500 millicents (1.5¢) × 7 = 10.5¢ << 15¢ cap.
+const MILLICENTS_PER_IMAGE = 1500;
 
 function cacheKey(req: GeneratedSpriteRequest): string {
   return createHash('sha256')
@@ -93,6 +96,42 @@ function falProvider(apiKey: string, baseUrl: string): ProviderImpl {
   };
 }
 
+function openaiProvider(apiKey: string): ProviderImpl {
+  return {
+    async generate(prompt) {
+      try {
+        const isBackground = /720x1280|vertical mobile|background/i.test(prompt);
+        const res = await fetch('https://api.openai.com/v1/images/generations', {
+          method: 'POST',
+          headers: {
+            'authorization': `Bearer ${apiKey}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'gpt-image-1',
+            prompt,
+            size: isBackground ? '1024x1536' : '1024x1024',
+            quality: 'low',
+            n: 1,
+          }),
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          logger.warn({ status: res.status, body: text.slice(0, 300) }, 'image.openai.failed');
+          return null;
+        }
+        const body = (await res.json()) as { data?: Array<{ b64_json?: string }> };
+        const b64 = body.data?.[0]?.b64_json;
+        if (!b64) return null;
+        return `data:image/png;base64,${b64}`;
+      } catch (err) {
+        logger.warn({ err }, 'image.openai.error');
+        return null;
+      }
+    },
+  };
+}
+
 function replicateProvider(apiKey: string, baseUrl: string): ProviderImpl {
   // Replicate Flux Schnell: black-forest-labs/flux-schnell
   return {
@@ -136,7 +175,11 @@ function replicateProvider(apiKey: string, baseUrl: string): ProviderImpl {
 function resolveProvider(): ProviderImpl | null {
   const provider = process.env.IMAGE_PROVIDER ?? 'disabled';
   if (provider === 'disabled') return null;
-  const apiKey = process.env.IMAGE_PROVIDER_API_KEY ?? '';
+  // For OpenAI, fall back to the moderation key when IMAGE_PROVIDER_API_KEY isn't set —
+  // it's the same OpenAI account so duplicating the key in the env is pointless.
+  const apiKey =
+    process.env.IMAGE_PROVIDER_API_KEY ||
+    (provider === 'openai' ? process.env.EDUMIND_MODERATION_API_KEY ?? '' : '');
   const baseUrl = process.env.IMAGE_PROVIDER_BASE_URL ?? '';
   if (!apiKey) return null;
   if (provider === 'flux_schnell' || provider === 'fal') {
@@ -144,6 +187,9 @@ function resolveProvider(): ProviderImpl | null {
   }
   if (provider === 'replicate') {
     return replicateProvider(apiKey, baseUrl || 'https://api.replicate.com');
+  }
+  if (provider === 'openai') {
+    return openaiProvider(apiKey);
   }
   return null;
 }
