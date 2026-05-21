@@ -36,6 +36,14 @@ export async function loadGameFeel(): Promise<string> {
   return raw;
 }
 
+export async function loadMascot(): Promise<string> {
+  const hit = cache.get('mascot');
+  if (hit) return hit;
+  const raw = await readFile(join(CLIENT_DIR, 'Mascot.js'), 'utf8');
+  cache.set('mascot', raw);
+  return raw;
+}
+
 export async function loadArabicFontBase64(): Promise<string> {
   const hit = cache.get('font');
   if (hit) return hit;

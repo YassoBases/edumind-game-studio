@@ -149,6 +149,30 @@
       "verified": true
     },
     {
+      "signature": "mascot_missing",
+      "occurrences": 1,
+      "last_seen": "2026-05-21T00:00:00.000Z",
+      "root_cause": "Generated game omits the mascot. Pip the fox lives in window.Mascot and must appear in the HUD area of every game.",
+      "fix_template": "Inside GameScene.create(), after setting up the HUD, add: const pip = window.Mascot.create(this, this.scale.width - 70, 130, 0.6); — and call pip.react('correct'), pip.react('wrong'), pip.react('combo3'), pip.react('levelComplete') from the appropriate game-state handlers.",
+      "verified": true
+    },
+    {
+      "signature": "raw_buttons:no_candy",
+      "occurrences": 1,
+      "last_seen": "2026-05-21T00:00:00.000Z",
+      "root_cause": "Generated game creates interactive UI buttons via raw setInteractive() + scene.add.rectangle, instead of using the GameFeel.candyButton primitive (the signature Duolingo-style button).",
+      "fix_template": "Replace every UI button (Start, Continue, Retry, Next, etc.) with: const btn = window.GameFeel.candyButton(scene, x, y, w, h, 'Label', { variant: 'green', onTap: () => { ... } }); — Variants: green for primary CTAs, blue for secondary, yellow for special/XP, red for danger/skip, outline for tertiary. Do NOT use raw scene.add.rectangle + setInteractive for UI buttons.",
+      "verified": true
+    },
+    {
+      "signature": "educore_factories_low:0",
+      "occurrences": 1,
+      "last_seen": "2026-05-21T00:00:00.000Z",
+      "root_cause": "Cost lever C: generated game writes Phaser config + bridge wiring + HUD layout manually instead of using the EduCore factories. This bloats the code call's output tokens.",
+      "fix_template": "Replace the manual `new Phaser.Game({ type: Phaser.AUTO, ... })` with `new Phaser.Game({ ...window.EduCore.buildPhaserConfig({ width: W, height: H }), scene: [MenuScene, GameScene, EndScene] });`. Replace the manual reportLevel/reportSummary/reportComplete calls with a bridge from `window.EduCore.buildBridgeWiring(this, engine)`. Replace the manual makeScoreHud + makeTimerHud + makeLevelHud + makeHeartsHud calls with `const hud = window.EduCore.makeHud(this, { timeLimitSeconds, hearts: 3 });` — fields exposed as hud.score / hud.timer / hud.levelHud / hud.hearts / hud.mascot.",
+      "verified": true
+    },
+    {
       "signature": "external_resource:https://fonts.googleapis.com/css2",
       "occurrences": 1,
       "last_seen": "2026-05-15T00:00:00.000Z",

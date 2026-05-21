@@ -1,0 +1,269 @@
+{
+  "_doc": "Maps Kenney CC0 source PNG filenames to EduMind sprite library paths. Edit this when Kenney releases new pack versions and filenames change. Both fetch_kenney scripts read this file.",
+  "_packs": {
+    "racing-pack":          "https://kenney.nl/assets/racing-pack",
+    "sports-pack":          "https://kenney.nl/assets/sports-pack",
+    "tower-defense-kit":    "https://kenney.nl/assets/tower-defense-kit",
+    "platformer-pack-redux":"https://kenney.nl/assets/platformer-pack-redux"
+  },
+  "_lookups": {
+    "comment": "Source paths are relative to the unzipped pack root. Multiple sources for one role = first found wins."
+  },
+  "mappings": [
+    {
+      "comment": "=== racing-pack -> car_racing_f1 (red car) ===",
+      "from": ["PNG/Cars/car_red_1.png", "Tiles/car_red_1.png"],
+      "to": "backend/sprites/library/car_racing_f1/car-player.png"
+    },
+    {
+      "from": ["PNG/Cars/car_blue_1.png", "Tiles/car_blue_1.png"],
+      "to": "backend/sprites/library/car_racing_f1/car-rival.png"
+    },
+    {
+      "from": ["PNG/Tiles/road_asphalt48.png", "Tiles/road_asphalt48.png"],
+      "to": "backend/sprites/library/car_racing_f1/road-tile.png"
+    },
+    {
+      "from": ["PNG/Tiles/grass_clear02.png", "Tiles/land_grass02.png"],
+      "to": "backend/sprites/library/car_racing_f1/horizon.png"
+    },
+    {
+      "from": ["PNG/Objects/barrier_red.png", "Tiles/barrier_red.png"],
+      "to": "backend/sprites/library/car_racing_f1/barrier-left.png"
+    },
+    {
+      "from": ["PNG/Objects/barrier_red.png", "Tiles/barrier_red.png"],
+      "to": "backend/sprites/library/car_racing_f1/barrier-right.png"
+    },
+
+    {
+      "comment": "=== racing-pack -> car_racing_street (purple/blue tuner) ===",
+      "from": ["PNG/Cars/car_blue_2.png", "Tiles/car_blue_2.png"],
+      "to": "backend/sprites/library/car_racing_street/car-player.png"
+    },
+    {
+      "from": ["PNG/Cars/car_yellow_4.png", "Tiles/car_yellow_4.png"],
+      "to": "backend/sprites/library/car_racing_street/car-rival.png"
+    },
+    {
+      "from": ["PNG/Tiles/road_asphalt45.png", "Tiles/road_asphalt45.png"],
+      "to": "backend/sprites/library/car_racing_street/road-tile.png"
+    },
+    {
+      "from": ["PNG/Tiles/grass_dirt02.png", "Tiles/land_dirt02.png"],
+      "to": "backend/sprites/library/car_racing_street/horizon.png"
+    },
+
+    {
+      "comment": "=== racing-pack -> motorbike ===",
+      "from": ["PNG/Cars/car_green_5.png", "Tiles/car_green_5.png"],
+      "to": "backend/sprites/library/motorbike/bike-player.png"
+    },
+    {
+      "from": ["PNG/Cars/car_red_5.png", "Tiles/car_red_5.png"],
+      "to": "backend/sprites/library/motorbike/bike-rival.png"
+    },
+    {
+      "from": ["PNG/Tiles/road_asphalt89.png", "Tiles/road_asphalt89.png"],
+      "to": "backend/sprites/library/motorbike/road-tile.png"
+    },
+
+    {
+      "comment": "=== racing-pack -> kart ===",
+      "from": ["PNG/Cars/car_yellow_3.png", "Tiles/car_yellow_3.png"],
+      "to": "backend/sprites/library/kart/kart-player.png"
+    },
+    {
+      "from": ["PNG/Cars/car_blue_3.png", "Tiles/car_blue_3.png"],
+      "to": "backend/sprites/library/kart/kart-rival.png"
+    },
+    {
+      "from": ["PNG/Tiles/road_sand44.png", "Tiles/road_sand44.png"],
+      "to": "backend/sprites/library/kart/track-tile.png"
+    },
+
+    {
+      "comment": "=== sports-pack -> football (soccer in the pack) ===",
+      "from": ["PNG/Equipment/equipment_soccerball.png", "Tiles/soccer_ball.png", "PNG/Default/ball_soccer1.png"],
+      "to": "backend/sprites/library/football/ball.png"
+    },
+    {
+      "from": ["PNG/Characters/character_male_a.png", "Tiles/character01.png", "Default/character_a.png"],
+      "to": "backend/sprites/library/football/player.png"
+    },
+    {
+      "from": ["PNG/Characters/character_male_b.png", "Tiles/character02.png"],
+      "to": "backend/sprites/library/football/goalkeeper.png"
+    },
+    {
+      "from": ["PNG/Equipment/equipment_goal.png", "Tiles/goal.png"],
+      "to": "backend/sprites/library/football/goal-frame.png"
+    },
+
+    {
+      "comment": "=== sports-pack -> basketball ===",
+      "from": ["PNG/Default/ball_basketball1.png", "PNG/Equipment/equipment_basketball.png"],
+      "to": "backend/sprites/library/basketball/ball.png"
+    },
+    {
+      "from": ["PNG/Default/equipment_hoop.png", "PNG/Equipment/equipment_basketball_hoop.png"],
+      "to": "backend/sprites/library/basketball/goal_frame.png"
+    },
+    {
+      "from": ["PNG/Characters/character_male_a.png"],
+      "to": "backend/sprites/library/basketball/player.png"
+    },
+
+    {
+      "comment": "=== sports-pack -> hockey ===",
+      "from": ["PNG/Default/equipment_puck.png", "PNG/Equipment/equipment_hockey_puck.png"],
+      "to": "backend/sprites/library/hockey/ball.png"
+    },
+    {
+      "from": ["PNG/Default/equipment_hockey_net.png", "PNG/Equipment/equipment_hockey_goal.png"],
+      "to": "backend/sprites/library/hockey/goal_frame.png"
+    },
+    {
+      "from": ["PNG/Characters/character_male_c.png"],
+      "to": "backend/sprites/library/hockey/player.png"
+    },
+
+    {
+      "comment": "=== sports-pack -> archery ===",
+      "from": ["PNG/Default/equipment_target.png", "PNG/Equipment/equipment_archery_target.png"],
+      "to": "backend/sprites/library/archery/goal_frame.png"
+    },
+    {
+      "from": ["PNG/Default/equipment_bow.png", "PNG/Equipment/equipment_bow.png"],
+      "to": "backend/sprites/library/archery/ball.png"
+    },
+    {
+      "from": ["PNG/Characters/character_female_a.png"],
+      "to": "backend/sprites/library/archery/player.png"
+    },
+
+    {
+      "comment": "=== tower-defense-kit -> castle ===",
+      "from": ["PNG/Default/towerRound_sampleA.png", "Tiles/tower_castle.png"],
+      "to": "backend/sprites/library/castle/block.png"
+    },
+    {
+      "from": ["PNG/Default/towerRound_sampleE.png", "Tiles/tower_castle_damaged.png"],
+      "to": "backend/sprites/library/castle/wrong_block.png"
+    },
+    {
+      "from": ["PNG/Default/towerRound_base.png", "Tiles/tower_base.png"],
+      "to": "backend/sprites/library/castle/base.png"
+    },
+    {
+      "from": ["PNG/Default/towerRound_top.png", "Tiles/tower_flag.png"],
+      "to": "backend/sprites/library/castle/flag.png"
+    },
+
+    {
+      "comment": "=== tower-defense-kit -> rocket (closest analogue: rounded towers as stages) ===",
+      "from": ["PNG/Default/towerRound_sampleC.png"],
+      "to": "backend/sprites/library/rocket/block.png"
+    },
+    {
+      "from": ["PNG/Default/towerRound_sampleG.png"],
+      "to": "backend/sprites/library/rocket/wrong_block.png"
+    },
+    {
+      "from": ["PNG/Default/towerSquare_base.png"],
+      "to": "backend/sprites/library/rocket/base.png"
+    },
+
+    {
+      "comment": "=== tower-defense-kit -> skyscraper (square towers) ===",
+      "from": ["PNG/Default/towerSquare_sampleA.png"],
+      "to": "backend/sprites/library/skyscraper/block.png"
+    },
+    {
+      "from": ["PNG/Default/towerSquare_sampleD.png"],
+      "to": "backend/sprites/library/skyscraper/wrong_block.png"
+    },
+    {
+      "from": ["PNG/Default/towerSquare_base.png"],
+      "to": "backend/sprites/library/skyscraper/base.png"
+    },
+
+    {
+      "comment": "=== tower-defense-kit -> treehouse (no perfect match — use wood-looking variants) ===",
+      "from": ["PNG/Default/towerSquare_sampleE.png"],
+      "to": "backend/sprites/library/treehouse/block.png"
+    },
+    {
+      "from": ["PNG/Default/towerSquare_sampleF.png"],
+      "to": "backend/sprites/library/treehouse/wrong_block.png"
+    },
+
+    {
+      "comment": "=== platformer-pack-redux -> fantasy ===",
+      "from": ["PNG/Players/Player Blue/playerBlue_stand.png", "Tiles/player_blue_stand.png"],
+      "to": "backend/sprites/library/fantasy/hero.png"
+    },
+    {
+      "from": ["PNG/Items/coinGold.png", "Tiles/coin_gold.png"],
+      "to": "backend/sprites/library/fantasy/treasure.png"
+    },
+    {
+      "from": ["PNG/Enemies/blockerBody.png"],
+      "to": "backend/sprites/library/fantasy/enemy.png"
+    },
+    {
+      "from": ["PNG/Tiles/sign.png", "Tiles/sign.png"],
+      "to": "backend/sprites/library/fantasy/fork.png"
+    },
+    {
+      "from": ["PNG/Tiles/grass.png", "Tiles/grass.png"],
+      "to": "backend/sprites/library/fantasy/path.png"
+    },
+
+    {
+      "comment": "=== platformer-pack-redux -> sci_fi ===",
+      "from": ["PNG/Players/Player Green/playerGreen_stand.png"],
+      "to": "backend/sprites/library/sci_fi/hero.png"
+    },
+    {
+      "from": ["PNG/Items/star.png"],
+      "to": "backend/sprites/library/sci_fi/treasure.png"
+    },
+    {
+      "from": ["PNG/Enemies/spikeMan_stand.png"],
+      "to": "backend/sprites/library/sci_fi/enemy.png"
+    },
+    {
+      "from": ["PNG/Tiles/sign.png"],
+      "to": "backend/sprites/library/sci_fi/fork.png"
+    },
+
+    {
+      "comment": "=== platformer-pack-redux -> detective ===",
+      "from": ["PNG/Players/Player Red/playerRed_stand.png"],
+      "to": "backend/sprites/library/detective/hero.png"
+    },
+    {
+      "from": ["PNG/Items/gemBlue.png"],
+      "to": "backend/sprites/library/detective/treasure.png"
+    },
+    {
+      "from": ["PNG/Enemies/sun.png"],
+      "to": "backend/sprites/library/detective/enemy.png"
+    },
+
+    {
+      "comment": "=== platformer-pack-redux -> anime ===",
+      "from": ["PNG/Players/Player Pink/playerPink_stand.png"],
+      "to": "backend/sprites/library/anime/hero.png"
+    },
+    {
+      "from": ["PNG/Items/gemRed.png"],
+      "to": "backend/sprites/library/anime/treasure.png"
+    },
+    {
+      "from": ["PNG/Enemies/slimeBlue.png"],
+      "to": "backend/sprites/library/anime/enemy.png"
+    }
+  ]
+}

@@ -633,6 +633,216 @@
     });
   }
 
+  // ---------- Factories (Cost lever C: shift code-call output tokens into the runtime) ----------
+  //
+  // The LLM's code call previously emitted ~7,500 output tokens because it had to write
+  // Phaser config + scene skeletons + level loop scaffolding + HUD setup + bridge wiring
+  // every single time. These factories own that boilerplate so the LLM only needs to
+  // register archetype-specific callbacks. Realistic drop: ~7,500 → ~4,500 output tokens.
+
+  /**
+   * Returns the standard Phaser game-config object. Templates spread their `scene` array
+   * into it and pass to `new Phaser.Game({ ...buildPhaserConfig(), scene: [...] })`.
+   */
+  function buildPhaserConfig(opts) {
+    const o = opts || {};
+    return {
+      type: global.Phaser ? global.Phaser.AUTO : 0,
+      parent: o.parent || 'game-container',
+      width: o.width || 720,
+      height: o.height || 1280,
+      backgroundColor: o.backgroundColor || '#0b1020',
+      scale: {
+        mode: global.Phaser ? global.Phaser.Scale.FIT : 0,
+        autoCenter: global.Phaser ? global.Phaser.Scale.CENTER_BOTH : 0,
+      },
+    };
+  }
+
+  /**
+   * Wires the bridge calls a game must always make.
+   * Pass the engine returned by AdaptiveEngine.create. Each level-end and session-end
+   * uses the engine to compute scores/accuracy/durations and fires the bridge events
+   * in the correct order (reportSummary BEFORE reportComplete).
+   *
+   * Returns: {
+   *   reportLevel(level, levelInfo)        // forwards engine.completeLevel result to bridge
+   *   reportFinish()                       // emits reportSummary + reportComplete in order
+   *   reportScore(value)                   // pass-through to bridge
+   * }
+   */
+  function buildBridgeWiring(scene, engine) {
+    return {
+      reportLevel(level, info) {
+        if (global.EduMindAPI && global.EduMindAPI.reportLevel) {
+          global.EduMindAPI.reportLevel(
+            level,
+            info.score || 0,
+            info.accuracy || 0,
+            info.durationMs || 0,
+          );
+        }
+      },
+      reportFinish() {
+        const summary = engine.buildSummary();
+        if (global.EduMindAPI) {
+          if (global.EduMindAPI.reportSummary) global.EduMindAPI.reportSummary(summary);
+          if (global.EduMindAPI.reportComplete) {
+            global.EduMindAPI.reportComplete(
+              summary.totalScore,
+              summary.masteryAchieved,
+              summary.durationSeconds,
+            );
+          }
+        }
+        return summary;
+      },
+      reportScore(v) {
+        if (global.EduMindAPI && global.EduMindAPI.reportScore) global.EduMindAPI.reportScore(v);
+      },
+    };
+  }
+
+  /**
+   * Standard HUD layout: score top-left, timer top-right, level top-center, hearts top-left
+   * (under score), optional mascot slot in a corner.
+   * Returns: { score, timer, levelHud, hearts, mascot? }
+   * Templates can position custom elements relative to these — but the HUD itself is
+   * standardised.
+   */
+  function makeHud(scene, opts) {
+    const o = opts || {};
+    const W = scene.scale.width;
+    const score = makeScoreHud(scene, 24, 24);
+    const timer = makeTimerHud(scene, W - 24, 24, o.timeLimitSeconds || 60, o.onTimeout || (() => {}));
+    const levelHud = makeLevelHud(scene, W / 2, 24, 1, 5);
+    const hearts = makeHeartsHud(scene, 80, 90, o.hearts || 3);
+    let mascot = null;
+    if (o.mascot !== false && global.Mascot && global.Mascot.create) {
+      const mx = o.mascotX != null ? o.mascotX : W - 70;
+      const my = o.mascotY != null ? o.mascotY : 130;
+      mascot = global.Mascot.create(scene, mx, my, o.mascotScale || 0.6);
+    }
+    return { score, timer, levelHud, hearts, mascot };
+  }
+
+  /**
+   * The 5-level loop. Owns the engine.completeLevel call, the GameFeel.levelStart /
+   * levelEnd transition between levels, the stopReason check, and the final reportFinish.
+   *
+   * Usage:
+   *   const loop = EduCore.buildLevelLoop(scene, spec, engine, bridge, {
+   *     onLevelStart(levelIdx, lvl) { ... },   // set up the level's content
+   *     onLevelEnd(levelIdx, levelInfo) { ... },// teardown
+   *     reportLevelFn: (input) => engine.completeLevel(input),
+   *   });
+   *   loop.start();  // begins level 1 with the cinematic intro
+   *   loop.endLevel(levelInputs);  // call from the template when the level's content is exhausted
+   */
+  function buildLevelLoop(scene, spec, engine, bridge, callbacks) {
+    const cb = callbacks || {};
+    let endingLevel = false;
+    let currentLevel = 1;
+
+    function start() {
+      currentLevel = 1;
+      if (global.GameFeel && global.GameFeel.levelStart) {
+        global.GameFeel.levelStart(scene, 1, (spec.levels[0] && spec.levels[0].name) || 'LEVEL 1').then(() => {
+          if (cb.onLevelStart) cb.onLevelStart(1, spec.levels[0]);
+        });
+      } else if (cb.onLevelStart) {
+        cb.onLevelStart(1, spec.levels[0]);
+      }
+    }
+
+    function endLevel(input) {
+      if (endingLevel) return;
+      endingLevel = true;
+      const res = engine.completeLevel(input);
+      bridge.reportLevel(currentLevel, res);
+      if (cb.onLevelEnd) cb.onLevelEnd(currentLevel, res);
+      const next = res.nextLevel;
+      const stopReason = res.stopReason;
+      const score = input.score != null ? input.score : 0;
+      const acc = res.accuracy || 0;
+      const showCelebration = () => {
+        if (global.GameFeel && global.GameFeel.levelEnd) {
+          global.GameFeel.levelEnd(scene, score, acc, () => {
+            endingLevel = false;
+            if (stopReason) {
+              finish();
+            } else {
+              currentLevel = next;
+              if (global.GameFeel && global.GameFeel.levelStart) {
+                global.GameFeel.levelStart(scene, next, (spec.levels[next - 1] && spec.levels[next - 1].name) || ('LEVEL ' + next)).then(() => {
+                  if (cb.onLevelStart) cb.onLevelStart(next, spec.levels[next - 1]);
+                });
+              } else if (cb.onLevelStart) {
+                cb.onLevelStart(next, spec.levels[next - 1]);
+              }
+            }
+          });
+        } else {
+          endingLevel = false;
+          if (stopReason) finish();
+          else if (cb.onLevelStart) cb.onLevelStart(next, spec.levels[next - 1]);
+        }
+      };
+      showCelebration();
+    }
+
+    function finish() {
+      bridge.reportFinish();
+      if (cb.onFinish) cb.onFinish();
+    }
+
+    return { start, endLevel, finish, currentLevel: () => currentLevel };
+  }
+
+  /**
+   * Builds the standard 3-scene skeleton.
+   * Templates call EduCore.buildGameSceneSkeleton(spec, archetype, callbacks) and get back
+   * a class to use as their GameScene. callbacks fields:
+   *   preloadSpriteRoles: string[]  — passed to EduCore.preloadSprites
+   *   onCreate(scene, hud, bridge, loop): void
+   *   onLevelStart(levelIdx, lvl, scene, hud, bridge, loop): void
+   *   onCorrect(item, scene, hud, bridge, loop): void   (template handles its own score/heart logic via these refs)
+   */
+  function buildGameSceneSkeleton(spec, archetypeId, callbacks) {
+    const cb = callbacks || {};
+    const PhaserScene = global.Phaser ? global.Phaser.Scene : function () {};
+    return class GameScene extends PhaserScene {
+      constructor() { super('GameScene'); }
+      preload() {
+        if (cb.preloadSpriteRoles) preloadSprites(this, cb.preloadSpriteRoles);
+        if (spec.concepts) preloadGeneratedConcepts(this, spec.concepts.map((c) => c.id));
+        if (cb.onPreload) cb.onPreload(this);
+      }
+      create() {
+        const engine = AdaptiveEngineCreate(spec);
+        const bridge = buildBridgeWiring(this, engine);
+        const hud = makeHud(this, {
+          timeLimitSeconds: (spec.levels[0] && spec.levels[0].timeLimitSeconds) || 60,
+          hearts: 3,
+        });
+        const loop = buildLevelLoop(this, spec, engine, bridge, {
+          onLevelStart: (lvlIdx, lvl) => cb.onLevelStart && cb.onLevelStart(lvlIdx, lvl, this, hud, bridge, loop),
+          onLevelEnd: cb.onLevelEnd,
+          onFinish: () => {
+            if (cb.onFinish) cb.onFinish(this);
+          },
+        });
+        // Make refs available to onCreate hook
+        this.engine = engine;
+        this.bridge = bridge;
+        this.hud = hud;
+        this.loop = loop;
+        if (cb.onCreate) cb.onCreate(this, hud, bridge, loop);
+        loop.start();
+      }
+    };
+  }
+
   global.EduCore = {
     setLanguage,
     t,
@@ -655,8 +865,14 @@
     AdaptiveEngine: { create: AdaptiveEngineCreate },
     buildMenuScene,
     buildEndScene,
+    // Cost-lever-C factories
+    buildPhaserConfig,
+    buildBridgeWiring,
+    makeHud,
+    buildLevelLoop,
+    buildGameSceneSkeleton,
     cues,
     applyPalette,
-    version: '1.1.0',
+    version: '1.2.0',
   };
 })(window);

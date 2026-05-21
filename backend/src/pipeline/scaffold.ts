@@ -1,5 +1,4 @@
-import { env } from '../env.ts';
-import { loadArabicFontBase64, loadEduCore, loadGameFeel, loadPhaserBundle, PHASER_CDN } from './templates.ts';
+import { loadArabicFontBase64, loadEduCore, loadGameFeel, loadMascot, loadPhaserBundle, PHASER_CDN } from './templates.ts';
 
 export type ScaffoldInput = {
   language: 'en' | 'ar';
@@ -46,17 +45,20 @@ window.EduCore && window.EduCore.setLanguage('${lang}');
 export async function wrapInScaffold(input: ScaffoldInput): Promise<string> {
   const lang = input.language;
   const dir = lang === 'ar' ? 'rtl' : 'ltr';
-  const [eduCore, gameFeel, phaserBundle, arabicFont] = await Promise.all([
+  const [eduCore, gameFeel, mascot, phaserBundle, arabicFont] = await Promise.all([
     loadEduCore(),
     loadGameFeel(),
+    loadMascot(),
     loadPhaserBundle(),
     loadArabicFontBase64(),
   ]);
 
-  const phaserTag =
-    env().NODE_ENV === 'production' && phaserBundle
-      ? `<script>${phaserBundle}</script>`
-      : PHASER_CDN;
+  // Inline the bundle whenever it's staged on disk — saves ~1.3 MB of network per game
+  // load and one CDN round-trip. boot-time inline_phaser.ts copies it from node_modules.
+  // Falls back to the CDN script tag if the file isn't staged (e.g. CI without npm install).
+  const phaserTag = phaserBundle
+    ? `<script>${phaserBundle}</script>`
+    : PHASER_CDN;
 
   const fontFace = FONT_FACE_TEMPLATE(arabicFont);
   const spriteScript = `window.EduSprites = ${JSON.stringify(
@@ -78,6 +80,7 @@ ${fontFace}
 ${phaserTag}
 <script>${eduCore}</script>
 <script>${gameFeel}</script>
+<script>${mascot}</script>
 <script>${spriteScript}</script>
 <script>${BRIDGE_SCRIPT(lang)}</script>
 <script>

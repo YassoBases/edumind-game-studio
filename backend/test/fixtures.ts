@@ -47,19 +47,19 @@ const engine = window.EduCore.AdaptiveEngine.create(SPEC);
 class MenuScene extends Phaser.Scene {}
 class GameScene extends Phaser.Scene {
   create() {
-    const score = window.EduCore.makeScoreHud(this, 24, 24);
-    const timer = window.EduCore.makeTimerHud(this, 696, 24, 60);
+    const hud = window.EduCore.makeHud(this, { timeLimitSeconds: 60, hearts: 3 });
+    const bridge = window.EduCore.buildBridgeWiring(this, engine);
+    const pip = window.Mascot.create(this, 600, 130, 0.6);
     window.GameFeel.levelStart(this, 1, 'Begin');
     window.GameFeel.scorePopup(this, 360, 640, '+10', 0xfbbf24);
     window.GameFeel.celebrate(this, 360, 640, 3);
     window.GameFeel.audio.correctChain(2);
     window.GameFeel.levelEnd(this, 100, 0.8, () => {});
-    window.EduMindAPI.reportLevel(1, 0.8, 0.8, 1000);
-    window.EduMindAPI.reportSummary({});
-    window.EduMindAPI.reportComplete(0, true, 0);
-    this.add.rectangle(360, 640, 200, 100, 0x1f2937).setInteractive({ useHandCursor: true });
+    window.GameFeel.candyButton(this, 360, 900, 220, 56, 'Continue', { variant: 'green', onTap: () => {} });
+    bridge.reportLevel(1, { score: 0.8, accuracy: 0.8, durationMs: 1000 });
+    bridge.reportFinish();
   }
 }
 class EndScene extends Phaser.Scene {}
-new Phaser.Game({ scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH } });
+new Phaser.Game({ ...window.EduCore.buildPhaserConfig({ width: 720, height: 1280 }), scene: [MenuScene, GameScene, EndScene] });
 `;

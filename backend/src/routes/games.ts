@@ -8,6 +8,7 @@ import { ARCHETYPE_TO_TEMPLATE } from '../schemas/archetypes.ts';
 import { runGenerationPipeline } from '../pipeline/generate.ts';
 import { createAnthropicProvider } from '../providers/anthropic.ts';
 import { createOpenAIModerationProvider } from '../providers/openai.ts';
+import { awardCompletionXp } from './students.ts';
 
 const generation = createAnthropicProvider();
 const moderation = createOpenAIModerationProvider();
@@ -324,13 +325,79 @@ export async function gamesRoutes(app: FastifyInstance): Promise<void> {
     const { id } = req.params as { id: string };
     const body = RefineBody.parse(req.body ?? {});
     const game = await prisma.game.findUnique({ where: { id } });
-    if (!game) return reply.status(404).send({ error: 'not_found' });
+    if (!game || game.deletedAt) return reply.status(404).send({ error: 'not_found' });
     const studentId = getStudentId(req);
     if (game.studentId !== (await ensureStudent(studentId, game.language as 'en' | 'ar')).id) {
       return reply.status(403).send({ error: 'forbidden' });
     }
 
-    // Refinement is a Haiku spec-level edit. Apply to the stored spec, regenerate inner-script.
+    const { classifyRefine, applyRefinePatch } = await import('../pipeline/refine_patcher.ts');
+    const { composeSprites } = await import('../sprites/compose.ts');
+    const { wrapInScaffold } = await import('../pipeline/scaffold.ts');
+    const { loadTemplate } = await import('../pipeline/templates.ts');
+
+    // Cost lever D — classify and try the deterministic fast paths first.
+    const classification = await classifyRefine((generation as unknown as { _client?: never })._client as never ?? null, body.instruction).catch(() => null) ||
+      // Fallback: pass the anthropic client manually. Provider doesn't expose it; build a
+      // tiny inline classifier client.
+      await (async () => {
+        const Anthropic = (await import('@anthropic-ai/sdk')).default;
+        const { env } = await import('../env.ts');
+        const c = new Anthropic({ apiKey: env().EDUMIND_GENERATION_API_KEY });
+        return classifyRefine(c, body.instruction);
+      })();
+
+    const currentSpec = game.spec as unknown as import('../schemas/gameSpec.ts').GameSpec;
+
+    if (classification && classification.pattern !== 'other') {
+      const result = applyRefinePatch(currentSpec, classification);
+      if (result.applied) {
+        // Theme-only swap: skip both spec and code, just regenerate the sprite manifest + HTML.
+        if (result.themeOnly && result.newTheme && game.archetype) {
+          const sprites = await composeSprites(
+            result.spec,
+            game.archetype as import('../schemas/archetypes.ts').ArchetypeId,
+            result.newTheme,
+          );
+          const html = await wrapInScaffold({
+            language: result.spec.language,
+            innerScript: extractInnerScriptFromHtml(game.html) ?? '',
+            sprites: sprites.manifest,
+          });
+          const updated = await prisma.game.update({
+            where: { id },
+            data: { spec: result.spec as unknown as object, themeId: result.newTheme, html },
+          });
+          return reply.send({ gameId: updated.id, html: updated.html, refinePattern: classification.pattern });
+        }
+        // Difficulty / more-questions patches: regenerate code from the patched spec.
+        const templateFile = game.archetype || game.templateId;
+        const templateHtml = await loadTemplate(templateFile as import('../schemas/gameSpec.ts').TemplateId);
+        const codeRes = await generation.generateCode(result.spec, templateHtml);
+        const sprites = game.archetype && game.themeId
+          ? (await composeSprites(result.spec, game.archetype as import('../schemas/archetypes.ts').ArchetypeId, game.themeId as import('../schemas/archetypes.ts').ThemeId)).manifest
+          : { library: {}, generated: {} };
+        const html = await wrapInScaffold({
+          language: result.spec.language,
+          innerScript: codeRes.innerScript,
+          sprites,
+        });
+        const updated = await prisma.game.update({
+          where: { id },
+          data: {
+            spec: result.spec as unknown as object,
+            html,
+            outputTokens: game.outputTokens + codeRes.usage.outputTokens,
+            inputTokens: game.inputTokens + codeRes.usage.inputTokens,
+            cacheReadTokens: game.cacheReadTokens + codeRes.usage.cacheReadTokens,
+            cacheWriteTokens: game.cacheWriteTokens + codeRes.usage.cacheWriteTokens,
+          },
+        });
+        return reply.send({ gameId: updated.id, html: updated.html, refinePattern: classification.pattern });
+      }
+    }
+
+    // Pattern 5 (other): fall back to the legacy full-regen path.
     const editPrompt = `${body.instruction}\n\nCURRENT_SPEC:\n${JSON.stringify(game.spec)}`;
     const repaired = await generation.generateRepair(JSON.stringify(game.spec), editPrompt, true);
     let newSpec;
@@ -340,9 +407,7 @@ export async function gamesRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(422).send({ error: 'refine_invalid_spec' });
     }
     const codeRes = await generation.generateCode(newSpec, '');
-    const { wrapInScaffold } = await import('../pipeline/scaffold.ts');
     const html = await wrapInScaffold({ language: newSpec.language, innerScript: codeRes.innerScript });
-
     const updated = await prisma.game.update({
       where: { id },
       data: {
@@ -356,9 +421,15 @@ export async function gamesRoutes(app: FastifyInstance): Promise<void> {
           game.cacheWriteTokens + repaired.usage.cacheWriteTokens + codeRes.usage.cacheWriteTokens,
       },
     });
-
-    return reply.send({ gameId: updated.id, html: updated.html });
+    return reply.send({ gameId: updated.id, html: updated.html, refinePattern: 'other' });
   });
+
+  function extractInnerScriptFromHtml(html: string): string | null {
+    const scripts = Array.from(html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g));
+    if (scripts.length === 0) return null;
+    const last = scripts[scripts.length - 1];
+    return last?.[1] ?? null;
+  }
 
   app.post('/:id/level', async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -419,6 +490,26 @@ export async function gamesRoutes(app: FastifyInstance): Promise<void> {
       },
     });
 
+    // v3 game-storage: writeback bestScore + lastPlayedAt + playCount.
+    const newBest = Math.max(game.bestScore, summary.totalScore || 0);
+    await prisma.game.update({
+      where: { id },
+      data: {
+        bestScore: newBest,
+        lastPlayedAt: new Date(),
+        playCount: { increment: 1 },
+      },
+    });
+
+    // v3 XP + streak.
+    type XpAward = Awaited<ReturnType<typeof awardCompletionXp>>;
+    let xpAward: XpAward = { xpDelta: 0, newStreak: 0, newXp: 0, streakAction: 'maintained' };
+    try {
+      xpAward = await awardCompletionXp(studentId, id, summary);
+    } catch (err) {
+      logger.warn({ err }, 'xp.award_failed');
+    }
+
     // Fire-and-forget enrichment.
     void (async () => {
       try {
@@ -436,7 +527,12 @@ export async function gamesRoutes(app: FastifyInstance): Promise<void> {
       }
     })();
 
-    return reply.send({ summaryId: stored.id, enrichmentReady: false });
+    return reply.send({
+      summaryId: stored.id,
+      enrichmentReady: false,
+      xp: xpAward,
+      bestScore: newBest,
+    });
   });
 
   app.get('/:id/summary', async (req, reply) => {
@@ -468,12 +564,82 @@ export async function gamesRoutes(app: FastifyInstance): Promise<void> {
     const studentId = getStudentId(req);
     const student = await prisma.student.findUnique({ where: { externalId: studentId } });
     if (!student) return reply.send({ games: [] });
+    const q = req.query as { limit?: string; before?: string };
+    const limit = Math.min(100, Math.max(1, Number(q.limit) || 20));
     const games = await prisma.game.findMany({
-      where: { studentId: student.id },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-      select: { id: true, topic: true, subject: true, language: true, createdAt: true, templateId: true },
+      where: {
+        studentId: student.id,
+        deletedAt: null,
+        ...(q.before ? { createdAt: { lt: new Date(q.before) } } : {}),
+      },
+      orderBy: [{ lastPlayedAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
+      take: limit,
+      // Metadata only — fetch the full HTML separately via GET /:id when launching.
+      select: {
+        id: true, topic: true, subject: true, language: true, createdAt: true,
+        templateId: true, archetype: true, themeId: true, orientation: true,
+        lastPlayedAt: true, playCount: true, bestScore: true,
+      },
     });
     return reply.send({ games });
+  });
+
+  // v3 storage-loop endpoints.
+  // GET /api/games/:id — full payload incl. HTML, owner-scoped.
+  app.get('/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const studentId = getStudentId(req);
+    const game = await prisma.game.findUnique({ where: { id } });
+    if (!game || game.deletedAt) return reply.status(404).send({ error: 'not_found' });
+    const student = await prisma.student.findUnique({ where: { externalId: studentId } });
+    if (!student || game.studentId !== student.id) {
+      return reply.status(403).send({ error: 'forbidden' });
+    }
+    return reply.send({
+      gameId: game.id,
+      html: game.html,
+      spec: game.spec,
+      archetype: game.archetype,
+      themeId: game.themeId,
+      language: game.language,
+      orientation: game.orientation,
+      topic: game.topic,
+      subject: game.subject,
+      createdAt: game.createdAt,
+      bestScore: game.bestScore,
+      lastPlayedAt: game.lastPlayedAt,
+      playCount: game.playCount,
+    });
+  });
+
+  // DELETE /api/games/:id — soft delete (sets deletedAt).
+  app.delete('/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const studentId = getStudentId(req);
+    const game = await prisma.game.findUnique({ where: { id } });
+    if (!game || game.deletedAt) return reply.status(404).send({ error: 'not_found' });
+    const student = await prisma.student.findUnique({ where: { externalId: studentId } });
+    if (!student || game.studentId !== student.id) {
+      return reply.status(403).send({ error: 'forbidden' });
+    }
+    await prisma.game.update({ where: { id }, data: { deletedAt: new Date() } });
+    return reply.send({ ok: true });
+  });
+
+  // PATCH /api/games/:id — player calls this on session start (updates lastPlayedAt + playCount).
+  app.patch('/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const studentId = getStudentId(req);
+    const game = await prisma.game.findUnique({ where: { id } });
+    if (!game || game.deletedAt) return reply.status(404).send({ error: 'not_found' });
+    const student = await prisma.student.findUnique({ where: { externalId: studentId } });
+    if (!student || game.studentId !== student.id) {
+      return reply.status(403).send({ error: 'forbidden' });
+    }
+    await prisma.game.update({
+      where: { id },
+      data: { lastPlayedAt: new Date(), playCount: { increment: 1 } },
+    });
+    return reply.send({ ok: true });
   });
 }

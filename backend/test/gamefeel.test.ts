@@ -35,6 +35,19 @@ function makeScene(): Record<string, unknown> {
   const scale = { width: 720, height: 1280 };
   const tweenObjShim = { add: () => ({}) };
   const inputShim = { on: () => {}, off: () => {} };
+  const graphicsShim = () => {
+    const g: Record<string, unknown> = {};
+    const noop = () => g;
+    g.clear = noop; g.fillStyle = noop; g.lineStyle = noop;
+    g.fillRect = noop; g.fillRoundedRect = noop;
+    g.strokeRect = noop; g.strokeRoundedRect = noop;
+    g.beginPath = noop; g.moveTo = noop; g.lineTo = noop; g.closePath = noop;
+    g.arc = noop; g.fillCircle = noop; g.fillPath = noop; g.strokePath = noop;
+    g.setDepth = noop; g.setVisible = noop; g.setActive = noop;
+    g.setScale = noop; g.setAlpha = noop; g.setRotation = noop;
+    g.destroy = noop;
+    return g;
+  };
   const sceneObj = {
     tweens,
     time,
@@ -53,19 +66,27 @@ function makeScene(): Record<string, unknown> {
         destroy: () => {},
         x: 0, y: 0,
       }),
-      rectangle: () => ({
-        setOrigin: () => sceneObj, setDepth: () => sceneObj, setFillStyle: () => sceneObj,
-        setStrokeStyle: () => sceneObj, setActive: () => sceneObj, setVisible: () => sceneObj,
-        setAlpha: () => sceneObj, setScale: () => sceneObj, setRotation: () => sceneObj,
-        destroy: () => {}, x: 0, y: 0, width: 0,
-      }),
+      rectangle: () => {
+        const rect: Record<string, unknown> = {};
+        const self = () => rect;
+        rect.setOrigin = self; rect.setDepth = self; rect.setFillStyle = self;
+        rect.setStrokeStyle = self; rect.setActive = self; rect.setVisible = self;
+        rect.setAlpha = self; rect.setScale = self; rect.setRotation = self;
+        rect.setInteractive = self;
+        rect.on = self;
+        rect.destroy = () => {};
+        rect.x = 0; rect.y = 0; rect.width = 0;
+        return rect;
+      },
       circle: () => ({
         setStrokeStyle: () => sceneObj, setDepth: () => sceneObj, setScale: () => sceneObj,
         setAlpha: () => sceneObj, destroy: () => {}, x: 0, y: 0,
       }),
       container: () => ({
-        setDepth: () => sceneObj, add: () => {}, destroy: () => {},
+        setDepth: () => sceneObj, setSize: () => sceneObj, setAlpha: () => sceneObj,
+        add: () => {}, destroy: () => {}, x: 0, y: 0,
       }),
+      graphics: () => graphicsShim(),
     },
     input: inputShim,
   };
@@ -113,13 +134,15 @@ test('GameFeel registers on window with all documented surface', async () => {
   const camera = ['followObject', 'parallaxLayer', 'cinematicIntro'];
   const transitions = ['wipeIn', 'wipeOut', 'fadeTransition', 'irisOpen', 'irisClose'];
   const composite = ['celebrate', 'punish', 'levelStart', 'levelEnd'];
-  for (const name of [...screenLevel, ...objectLevel, ...particles, ...popups, ...camera, ...transitions, ...composite]) {
+  const ui = ['candyButton'];
+  for (const name of [...screenLevel, ...objectLevel, ...particles, ...popups, ...camera, ...transitions, ...composite, ...ui]) {
     assert.equal(typeof gf[name], 'function', `missing method: ${name}`);
   }
   const audioMethods = [
     'correct', 'correctChain', 'wrong', 'impact', 'woosh', 'levelUp', 'powerUp',
     'countdownTick', 'countdownGo', 'countdownFinal', 'crowdCheer', 'engineRev',
-    'swordSlash', 'setMusicLoop', 'stopMusic',
+    'swordSlash', 'streakExtended', 'xpGain', 'goalReached',
+    'setMusicLoop', 'stopMusic',
   ];
   for (const a of audioMethods) {
     assert.equal(typeof gf.audio[a], 'function', `missing audio.${a}`);
@@ -182,4 +205,17 @@ test('flash caps duration at 100ms', async () => {
 test('version is reported', async () => {
   const gf = await loadGameFeel();
   assert.match(gf.version, /^\d+\.\d+\.\d+/);
+});
+
+test('candyButton returns a handle with setLabel / setEnabled / destroy', async () => {
+  const gf = await loadGameFeel();
+  const scene = makeScene();
+  const btn = (gf.candyButton as (s: unknown, x: number, y: number, w: number, h: number, l: string, o?: unknown) => { setLabel: (s: string) => void; setEnabled: (v: boolean) => void; destroy: () => void; } | null)(
+    scene, 100, 200, 240, 56, 'Continue', { variant: 'green', onTap: () => {} },
+  );
+  assert.ok(btn, 'candyButton should return a handle');
+  assert.doesNotThrow(() => btn!.setLabel('Press me'));
+  assert.doesNotThrow(() => btn!.setEnabled(false));
+  assert.doesNotThrow(() => btn!.setEnabled(true));
+  assert.doesNotThrow(() => btn!.destroy());
 });

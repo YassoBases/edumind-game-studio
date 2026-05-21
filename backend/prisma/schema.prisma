@@ -14,10 +14,18 @@ model Student {
   externalId   String   @unique
   language     String   @default("en")
   createdAt    DateTime @default(now())
+  // v3 XP / streak / daily goal / league
+  xp                Int       @default(0)
+  streakCount       Int       @default(0)
+  streakLastPlayedAt DateTime?
+  dailyGoal         Int       @default(3)
+  leagueTier        String    @default("bronze")  // 'bronze' | 'silver' | 'gold'
   games        Game[]
   levels       LevelRecord[]
   summaries    Summary[]
   conceptMastery ConceptMastery[]
+  xpEvents     XpEvent[]
+  streakEvents StreakEvent[]
 }
 
 model Game {
@@ -39,12 +47,41 @@ model Game {
   cacheReadTokens Int       @default(0)
   cacheWriteTokens Int      @default(0)
   imageCostUsdMillicents Int @default(0)
+  // v3 storage-loop additions
+  lastPlayedAt   DateTime?
+  playCount      Int        @default(0)
+  bestScore      Int        @default(0)
+  deletedAt      DateTime?
   createdAt      DateTime   @default(now())
   levels         LevelRecord[]
   summary        Summary?
 
   @@index([studentId, createdAt])
+  @@index([studentId, lastPlayedAt])
   @@index([archetype, themeId])
+}
+
+model XpEvent {
+  id        String   @id @default(cuid())
+  studentId String
+  student   Student  @relation(fields: [studentId], references: [id])
+  amount    Int
+  reason    String   // 'level_complete' | 'mastery' | 'streak_bonus' | 'daily_goal'
+  gameId    String?
+  createdAt DateTime @default(now())
+
+  @@index([studentId, createdAt])
+}
+
+model StreakEvent {
+  id         String   @id @default(cuid())
+  studentId  String
+  student    Student  @relation(fields: [studentId], references: [id])
+  action     String   // 'extended' | 'lost' | 'restored'
+  countAfter Int
+  createdAt  DateTime @default(now())
+
+  @@index([studentId, createdAt])
 }
 
 model SpriteCache {
@@ -100,6 +137,20 @@ model ConceptMastery {
   lastSeen    DateTime @default(now())
 
   @@id([studentId, conceptId])
+}
+
+model SpecCache {
+  cacheKey    String   @id
+  spec        Json
+  archetypeId String?
+  themeId     String?
+  model       String
+  hitCount    Int      @default(0)
+  ttlSeconds  Int      @default(86400)
+  createdAt   DateTime @default(now())
+  lastUsedAt  DateTime @default(now())
+
+  @@index([archetypeId, themeId])
 }
 
 model RepairProtocolEntry {

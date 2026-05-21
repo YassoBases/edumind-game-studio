@@ -44,6 +44,15 @@ function v_no_external_resources(ctx: ValidatorContext): ValidatorResult {
 }
 
 function v_bridge_calls_present(ctx: ValidatorContext): ValidatorResult {
+  // Direct path (legacy) OR factory path (cost lever C).
+  // Factory path: `EduCore.buildBridgeWiring(...)` followed by calls like `bridge.reportLevel(...)`
+  // and `bridge.reportFinish()` (which internally fires reportSummary + reportComplete).
+  const usesFactory = /EduCore\.buildBridgeWiring\s*\(/.test(ctx.innerScript);
+  const factoryFinishes = /\.reportFinish\s*\(/.test(ctx.innerScript);
+  const factoryLevels = /\.reportLevel\s*\(/.test(ctx.innerScript);
+  if (usesFactory && factoryFinishes && factoryLevels) {
+    return { name: 'bridge_calls_present', ok: true, signature: 'bridge:factory', detail: 'using buildBridgeWiring' };
+  }
   const required = ['reportLevel', 'reportSummary', 'reportComplete'];
   const missing = required.filter((k) => !ctx.innerScript.includes(`EduMindAPI.${k}`));
   return {
@@ -73,13 +82,24 @@ function v_three_scenes_only(ctx: ValidatorContext): ValidatorResult {
 }
 
 function v_uses_educore(ctx: ValidatorContext): ValidatorResult {
-  const required = ['window.EduCore.AdaptiveEngine.create', 'window.EduCore.makeScoreHud'];
-  const missing = required.filter((k) => !ctx.innerScript.includes(k));
+  // AdaptiveEngine is always required. HUD can be the legacy makeScoreHud OR the factory
+  // makeHud (cost lever C) — either one demonstrates EduCore usage.
+  const hasAdaptiveEngine = ctx.innerScript.includes('window.EduCore.AdaptiveEngine.create') ||
+                            ctx.innerScript.includes('EduCore.AdaptiveEngine.create');
+  const hasHud = /(?:window\.)?EduCore\.makeScoreHud\b/.test(ctx.innerScript) ||
+                 /(?:window\.)?EduCore\.makeHud\b/.test(ctx.innerScript) ||
+                 /(?:window\.)?EduCore\.buildGameSceneSkeleton\b/.test(ctx.innerScript);
+  if (hasAdaptiveEngine && hasHud) {
+    return { name: 'uses_educore', ok: true, signature: 'educore:ok', detail: 'AdaptiveEngine + HUD primitive present' };
+  }
+  const missing: string[] = [];
+  if (!hasAdaptiveEngine) missing.push('window.EduCore.AdaptiveEngine.create');
+  if (!hasHud) missing.push('window.EduCore.makeScoreHud or makeHud or buildGameSceneSkeleton');
   return {
     name: 'uses_educore',
-    ok: missing.length === 0,
-    signature: missing.length ? `no_educore:${missing[0]}` : 'educore:ok',
-    detail: missing.length ? `Missing: ${missing.join(', ')}` : 'all present',
+    ok: false,
+    signature: `no_educore:${missing[0]}`,
+    detail: `Missing: ${missing.join(', ')}`,
   };
 }
 
@@ -168,14 +188,17 @@ function v_phaser4_api_check(ctx: ValidatorContext): ValidatorResult {
 }
 
 function v_phaser_scale_config(ctx: ValidatorContext): ValidatorResult {
+  // Legacy path: literal Phaser.Scale.FIT + CENTER_BOTH constants.
+  // Factory path: buildPhaserConfig() — the factory already includes the right scale mode.
   const hasFit = /Phaser\.Scale\.FIT/.test(ctx.innerScript);
   const hasCenter = /Phaser\.Scale\.CENTER_BOTH/.test(ctx.innerScript);
-  const ok = hasFit && hasCenter;
+  const hasFactory = /EduCore\.buildPhaserConfig\s*\(/.test(ctx.innerScript);
+  const ok = (hasFit && hasCenter) || hasFactory;
   return {
     name: 'phaser_scale_config',
     ok,
     signature: ok ? 'scale:ok' : 'scale_missing',
-    detail: ok ? 'FIT + CENTER_BOTH set' : 'Missing Phaser.Scale.FIT or CENTER_BOTH',
+    detail: ok ? 'scale config present' : 'Missing Phaser.Scale.FIT/CENTER_BOTH and no buildPhaserConfig',
   };
 }
 
@@ -225,6 +248,74 @@ function v_rtl_support_if_arabic(ctx: ValidatorContext): ValidatorResult {
       };
   }
   return { name: 'rtl_support_if_arabic', ok: true, signature: 'rtl:ok', detail: 'all text RTL-aware' };
+}
+
+function v_uses_mascot(ctx: ValidatorContext): ValidatorResult {
+  // Mascot must be instantiated at least once. Allow either the create call OR a stored
+  // reference like `this.mascot = window.Mascot.create(...)`.
+  const has = /window\.Mascot\.create\s*\(/.test(ctx.innerScript) ||
+              /Mascot\.create\s*\(/.test(ctx.innerScript);
+  if (!has) {
+    return {
+      name: 'uses_mascot',
+      ok: false,
+      signature: 'mascot_missing',
+      detail: 'Generated game does not instantiate Pip via window.Mascot.create(...)',
+    };
+  }
+  return { name: 'uses_mascot', ok: true, signature: 'mascot:ok', detail: 'mascot present' };
+}
+
+function v_uses_candy_button(ctx: ValidatorContext): ValidatorResult {
+  // UI buttons must use GameFeel.candyButton. Skip games that genuinely have no UI buttons
+  // (rare — most templates show menu / continue / level-end buttons). Heuristic: if the
+  // code contains `setInteractive({ useHandCursor` (the standard button-making pattern)
+  // and ALSO does not call GameFeel.candyButton, that's a missing-candy violation.
+  const hasInteractive = /setInteractive\s*\(\s*\{[^}]*useHandCursor/.test(ctx.innerScript);
+  const hasCandy = /GameFeel\.candyButton\s*\(/.test(ctx.innerScript);
+  if (hasInteractive && !hasCandy) {
+    return {
+      name: 'uses_candy_button',
+      ok: false,
+      signature: 'raw_buttons:no_candy',
+      detail: 'Game uses setInteractive buttons but never calls GameFeel.candyButton',
+    };
+  }
+  return {
+    name: 'uses_candy_button',
+    ok: true,
+    signature: hasCandy ? 'candy:used' : 'candy:no_buttons',
+    detail: hasCandy ? 'GameFeel.candyButton called' : 'no buttons in this game',
+  };
+}
+
+function v_uses_educore_factories(ctx: ValidatorContext): ValidatorResult {
+  // Cost lever C: generated games should lean on the EduCore factories. Count distinct
+  // factory references — at least 3 must appear. Templates that pre-existed v3 may not
+  // hit this yet; the prompt update + repair seed nudge new generations toward it.
+  const factories = [
+    'EduCore.buildPhaserConfig',
+    'EduCore.buildBridgeWiring',
+    'EduCore.makeHud',
+    'EduCore.buildLevelLoop',
+    'EduCore.buildGameSceneSkeleton',
+  ];
+  let found = 0;
+  for (const f of factories) if (ctx.innerScript.includes(f)) found += 1;
+  if (found < 3) {
+    return {
+      name: 'uses_educore_factories',
+      ok: false,
+      signature: `educore_factories_low:${found}`,
+      detail: `Only ${found} distinct EduCore factory references found (need ≥3 of buildPhaserConfig / buildBridgeWiring / makeHud / buildLevelLoop / buildGameSceneSkeleton)`,
+    };
+  }
+  return {
+    name: 'uses_educore_factories',
+    ok: true,
+    signature: 'educore_factories:ok',
+    detail: `${found} factory references`,
+  };
 }
 
 function v_uses_gamefeel(ctx: ValidatorContext): ValidatorResult {
@@ -309,6 +400,9 @@ export const VALIDATORS: Validator[] = [
   v_rtl_support_if_arabic,
   v_sprite_assets_referenced_exist,
   v_uses_gamefeel,
+  v_uses_mascot,
+  v_uses_candy_button,
+  v_uses_educore_factories,
 ];
 
 export function runValidators(ctx: ValidatorContext): ValidatorResult[] {

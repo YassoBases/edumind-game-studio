@@ -9,6 +9,13 @@ export const NormalizedRequest = z.object({
   language: z.enum(['en', 'ar']),
   studentInterests: z.array(z.string()).max(6).default([]),
   confidence: z.number().min(0).max(1),
+  /**
+   * Complexity hint used by cost lever A.
+   * - simple   = high-confidence common subject + standard archetype → Haiku spec
+   * - standard = default → Sonnet spec
+   * - novel    = unusual topic / low confidence / special requirements → Sonnet spec
+   */
+  complexity: z.enum(['simple', 'standard', 'novel']).default('standard'),
   clarifyingQuestion: z.string().nullable().default(null),
   safetyFlags: z.array(z.string()).default([]),
 });

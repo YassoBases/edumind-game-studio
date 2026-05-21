@@ -19,6 +19,8 @@ export type SpecInput = {
   style: string;
   theme?: string | undefined;
   extra?: string | undefined;
+  /** Cost lever A. When 'simple', use Haiku for the spec call; otherwise Sonnet. */
+  useFastModel?: boolean | undefined;
 };
 
 export type GenerationProvider = {

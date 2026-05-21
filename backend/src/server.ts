@@ -5,8 +5,14 @@ import { env } from './env.ts';
 import { logger } from './logger.ts';
 import { gamesRoutes } from './routes/games.ts';
 import { healthRoutes } from './routes/health.ts';
+import { studentsRoutes } from './routes/students.ts';
+import { ensurePhaserBundleInlined } from './bootstrap/inline_phaser.ts';
 
 async function bootstrap() {
+  // Stage the Phaser bundle from node_modules so the scaffold can inline it (eliminates
+  // the CDN script tag in production builds).
+  await ensurePhaserBundleInlined();
+
   const app = Fastify({ loggerInstance: logger, bodyLimit: 4 * 1024 * 1024 });
 
   await app.register(cors, { origin: true });
@@ -21,6 +27,7 @@ async function bootstrap() {
 
   await app.register(healthRoutes);
   await app.register(gamesRoutes, { prefix: '/api/games' });
+  await app.register(studentsRoutes, { prefix: '/api/students' });
 
   app.setErrorHandler((err, _req, reply) => {
     logger.error({ err }, 'request.error');

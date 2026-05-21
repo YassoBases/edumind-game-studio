@@ -19,9 +19,29 @@ Return ONLY a JSON object validating against this informal schema:
   "language": "en" | "ar",               // Arabic in free text overrides EN UI
   "studentInterests": string[],          // 0-3 tags extracted ("wolves", "racing")
   "confidence": number 0..1,
+  "complexity": "simple" | "standard" | "novel",  // see rubric below
   "clarifyingQuestion": string | null,   // only when confidence < 0.6
   "safetyFlags": string[]                // empty unless content is inappropriate
 }
+
+# Complexity rubric
+
+This routes the downstream spec call to either Haiku 4.5 (cheap, "simple") or Sonnet 4.6
+(default, "standard"/"novel"). Be aggressive on "simple" — most school topics qualify.
+
+- "simple": confidence >= 0.8, subject is one of {Biology, Math, Geography, History,
+  English, Chemistry, Physics, Arabic, Science}, AND topic is a well-known curriculum
+  topic (photosynthesis, mitosis, capitals, fractions, multiplication, vocab, periodic
+  table, parts of speech, prepositions, water cycle, food chains, etc.). Archetype is
+  one of the standard 4. → Haiku spec.
+- "novel": unusual topic the model would need to think hard about (cutting-edge science,
+  niche history, recently invented vocabulary), OR confidence < 0.7, OR the topic asks
+  for unusual structure (debate, role-play, simulation). → Sonnet spec.
+- "standard": everything else. → Sonnet spec.
+
+When in doubt between "simple" and "standard", pick "simple". The system catches
+Haiku-spec failures and retries with Sonnet, so the cost of a bad classification is
+bounded.
 
 # Theme list per archetype
 

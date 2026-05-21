@@ -23,6 +23,7 @@ import {
 import { runPlayabilityCheck, shouldRunPlayability } from './playwrightCheck.ts';
 import { composeSprites, type SpriteManifest } from '../sprites/compose.ts';
 import { llmCallMicroUsd, imagesMicroUsd } from '../pricing.ts';
+import { lookupSpec, makeSpecCacheKey, storeSpec } from './spec_cache.ts';
 
 export type PipelineStage =
   | 'moderation_pre'
@@ -181,6 +182,8 @@ export type PipelineInput = {
   req: GenerateRequest;
   normalized?: NormalizedRequest;
   onStage?: StageEmitter;
+  /** When true, skip the SpecCache lookup. Used by /refine so the student gets fresh content. */
+  bypassSpecCache?: boolean;
 };
 
 export async function runGenerationPipeline(
@@ -223,24 +226,48 @@ export async function runGenerationPipeline(
   const { templateId, archetype, themeId, templateFile } = resolveArchetype(req, normalized);
 
   const tSpec = emitStart('spec', 'Designing the game');
-  const specRes = await providers.generation.generateSpec({
-    language,
+  // Cost lever B — try the SpecCache first.
+  const specCacheKey = makeSpecCacheKey({
     subject: req.subject,
     topic: req.topic,
-    style: req.style,
-    theme: req.theme,
-    extra: req.extra,
-  });
-  totalUsage = addUsage(totalUsage, specRes.usage);
-  runningCostMicroUsd += llmCallMicroUsd(specRes.usage);
-  emitEnd('spec', 'Designing the game', tSpec, { tokens: specRes.usage });
-  const spec: GameSpec = {
-    ...specRes.spec,
-    templateId,
     language,
-    ...(archetype ? { archetype } : {}),
-    ...(themeId ? { themeId } : {}),
-  };
+    archetype,
+    themeId,
+    difficulty: req.extra?.match(/difficulty:(\w+)/)?.[1],
+    sessionLength: req.extra?.match(/length:(\w+)/)?.[1],
+  });
+  let spec: GameSpec | undefined;
+  let cacheHit = false;
+  if (!input.bypassSpecCache) {
+    const cached = await lookupSpec(specCacheKey);
+    if (cached) {
+      spec = { ...cached, templateId, language, ...(archetype ? { archetype } : {}), ...(themeId ? { themeId } : {}) };
+      cacheHit = true;
+      emitEnd('spec', 'Designing the game', tSpec, { cacheHit: true });
+    }
+  }
+  // Cost lever A: route 'simple' complexity to Haiku for the spec call. Only fires on cache miss.
+  let useFastModel = false;
+  if (!spec) {
+    useFastModel = normalized?.complexity === 'simple';
+    const specRes = await providers.generation.generateSpec({
+      language,
+      subject: req.subject,
+      topic: req.topic,
+      style: req.style,
+      theme: req.theme,
+      extra: req.extra,
+      useFastModel,
+    });
+    totalUsage = addUsage(totalUsage, specRes.usage);
+    runningCostMicroUsd += llmCallMicroUsd(specRes.usage);
+    emitEnd('spec', 'Designing the game', tSpec, { tokens: specRes.usage, fastModel: useFastModel });
+    spec = { ...specRes.spec, templateId, language, ...(archetype ? { archetype } : {}), ...(themeId ? { themeId } : {}) };
+    // Best-effort cache write
+    void storeSpec(specCacheKey, spec, { archetype, themeId, model: specRes.usage.model });
+  }
+  // Make TS happy by assigning to a typed local from here on
+  const finalSpec: GameSpec = spec;
 
   // Compose sprites IN PARALLEL with code generation. Both have explicit progress events.
   const templateHtml = await loadTemplate(templateFile as TemplateId);

@@ -21,9 +21,17 @@ test('detects localStorage usage', () => {
   assert.equal(f.signature, 'browser_storage:localStorage');
 });
 
-test('detects missing reportSummary call', () => {
+test('detects missing reportSummary call (legacy bridge path)', () => {
   const spec = makeValidSpec();
-  const innerScript = VALID_INNER_SCRIPT.replace('window.EduMindAPI.reportSummary({});', '');
+  // Legacy: direct EduMindAPI.* calls. Missing reportSummary should be flagged.
+  const innerScript = `
+    const SPEC = {};
+    const engine = window.EduCore.AdaptiveEngine.create(SPEC);
+    const score = window.EduCore.makeScoreHud(this, 24, 24);
+    window.EduMindAPI.reportLevel(1, 0.8, 0.8, 1000);
+    // (summary call deliberately omitted)
+    window.EduMindAPI.reportComplete(0, true, 0);
+  `;
   const results = runValidators({
     html: `<html><body><script>${innerScript}</script></body></html>`,
     innerScript,

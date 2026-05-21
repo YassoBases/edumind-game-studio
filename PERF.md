@@ -59,6 +59,26 @@ the corpus runs (`backend/scripts/generate_corpus.ts`) unless noted.
 
 ## Cost budget
 
+### v3 (current, after 5 cost levers — projected based on architecture, see WHATS_NEW_V3 §"Remaining mediocrity")
+
+Per generation, no AI images:
+
+| Stage | v2 cost | v3 cost | Lever |
+|---|---|---|---|
+| Normalize (Haiku) | ~0.1¢ | ~0.1¢ | — |
+| Spec call | ~7.5¢ | ~2.5¢ | A (Haiku for simple) + B (24h cache) |
+| Code call | ~12¢ | ~5¢ | C (factories drop 7.5K→4.5K output tokens) + E (tighter cache breakpoints) |
+| Repair | ~0.5¢ | ~0.5¢ | unchanged |
+| **Total** | **~20¢** | **~8¢** | **62% reduction target** |
+
+Per generation with Flux Schnell images: + ~2¢ (unchanged).
+Per refinement (after Lever D):
+- Patterns 1-3 (harder/easier/more_questions): ~5¢ (deterministic patch + code regen)
+- Pattern 4 (change_theme): **~$0** (sprite manifest swap + scaffold rewrap, no LLM call)
+- Pattern 5 (other): same as a full generation (~8¢)
+
+### v2 (previous, measured)
+
 Per generation, no AI images:
 - Spec call: ~7¢
 - Code call: ~12¢

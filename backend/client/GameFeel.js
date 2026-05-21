@@ -203,6 +203,22 @@
       noiseBurst({ durationMs: 220, filterType: 'highpass', filterHz: 2400, q: 8, gain: 0.18 });
       tone({ freq: 1200, type: 'triangle', durationMs: 120, gain: 0.07 });
     },
+    // v3 streak / XP / goal cues
+    streakExtended() {
+      // Two-tone ascending woosh, plus a sparkle. Used when streak day++ on completion.
+      noiseBurst({ durationMs: 280, filterType: 'highpass', filterHz: 1800, q: 4, gain: 0.10 });
+      tone({ freq: 880, type: 'triangle', durationMs: 180, gain: 0.10 });
+      global.setTimeout(() => tone({ freq: 1320, type: 'triangle', durationMs: 240, gain: 0.10 }), 150);
+    },
+    xpGain() {
+      // Single shimmer tick — UI plays this per-XP at 30ms intervals (capped at 20 reps).
+      tone({ freq: 1760, type: 'sine', durationMs: 50, gain: 0.05 });
+    },
+    goalReached() {
+      // Daily goal fanfare — a slightly grander variant of levelUp.
+      const seq = [659.25, 880, 1046.5, 1318.5, 1760];
+      seq.forEach((f, i) => global.setTimeout(() => tone({ freq: f, type: 'triangle', durationMs: 200, gain: 0.11 }), i * 80));
+    },
     setMusicLoop(pattern) {
       this.stopMusic();
       const a = ctx();
@@ -969,6 +985,108 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Candy button — signature Duolingo-style button for in-game UI.
+  // Solid top + 5px darker shadow band underneath, presses down on tap.
+  // Returns { container, setLabel, setEnabled, destroy }.
+  // Variants: 'green'|'blue'|'yellow'|'red'|'purple'|'outline'
+  // ---------------------------------------------------------------------------
+  const CANDY_TOP = {
+    green: 0x58CC02, blue: 0x1CB0F6, yellow: 0xFFC800,
+    red: 0xFF4B4B, purple: 0xCE82FF, outline: 0xFFFFFF,
+  };
+  const CANDY_SHADOW = {
+    green: 0x46A302, blue: 0x188FCB, yellow: 0xD1A500,
+    red: 0xD13C3C, purple: 0xA968D9, outline: 0xE5E5E5,
+  };
+  const CANDY_LABEL = {
+    green: '#FFFFFF', blue: '#FFFFFF', yellow: '#131F24',
+    red: '#FFFFFF', purple: '#FFFFFF', outline: '#131F24',
+  };
+
+  function candyButton(scene, x, y, w, h, label, opts) {
+    if (!scene) return null;
+    const variant = (opts && opts.variant) || 'green';
+    const onTap = opts && opts.onTap;
+    const SHADOW_BAND = (opts && opts.shadowBand) || 5;
+    const radius = (opts && opts.radius) || 16;
+
+    const top = CANDY_TOP[variant] || CANDY_TOP.green;
+    const shadow = CANDY_SHADOW[variant] || CANDY_SHADOW.green;
+    const labelColor = CANDY_LABEL[variant] || '#FFFFFF';
+
+    const container = scene.add.container(x, y);
+    container.setDepth(85);
+    container.setSize(w, h + SHADOW_BAND);
+
+    // Shadow band (drawn first so it sits below the top surface)
+    const shadowRect = scene.add.graphics();
+    shadowRect.fillStyle(shadow, 1);
+    shadowRect.fillRoundedRect(-w / 2, -h / 2 + SHADOW_BAND, w, h, radius);
+    container.add(shadowRect);
+
+    // Top surface
+    const topRect = scene.add.graphics();
+    function drawTop(offsetY) {
+      topRect.clear();
+      if (variant === 'outline') {
+        topRect.lineStyle(2, shadow, 1);
+      }
+      topRect.fillStyle(top, 1);
+      topRect.fillRoundedRect(-w / 2, -h / 2 + offsetY, w, h, radius);
+      if (variant === 'outline') {
+        topRect.strokeRoundedRect(-w / 2, -h / 2 + offsetY, w, h, radius);
+      }
+    }
+    drawTop(0);
+    container.add(topRect);
+
+    // Label
+    const txt = scene.add.text(0, 0, label, {
+      fontFamily: 'system-ui, sans-serif',
+      fontSize: Math.min(h * 0.34, 22) + 'px',
+      fontStyle: 'bold',
+      color: labelColor,
+    });
+    txt.setOrigin(0.5);
+    container.add(txt);
+
+    // Hit area
+    const hit = scene.add.rectangle(0, 0, w, h + SHADOW_BAND, 0x000000, 0).setInteractive({ useHandCursor: true });
+    container.add(hit);
+
+    let enabled = true;
+    let pressed = false;
+
+    const press = () => {
+      if (!enabled || pressed) return;
+      pressed = true;
+      drawTop(SHADOW_BAND);
+      txt.y = SHADOW_BAND / 2;
+    };
+    const release = (fire) => {
+      if (!pressed) return;
+      pressed = false;
+      drawTop(0);
+      txt.y = 0;
+      if (fire && enabled && onTap) onTap();
+    };
+
+    hit.on('pointerdown', press);
+    hit.on('pointerup', () => release(true));
+    hit.on('pointerupoutside', () => release(false));
+    hit.on('pointerout', () => release(false));
+
+    function setLabel(s) { txt.setText(s); }
+    function setEnabled(v) {
+      enabled = !!v;
+      container.setAlpha(enabled ? 1 : 0.6);
+    }
+    function destroy() { container.destroy(); }
+
+    return { container, setLabel, setEnabled, destroy };
+  }
+
+  // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
   function combinedShake(targetOrScene, intensity, durationMs) {
@@ -1019,8 +1137,10 @@
     punish,
     levelStart,
     levelEnd,
+    // Candy button (UI primitive used by archetypes and EduCore HUD)
+    candyButton,
     // Debug
-    version: '1.0.0',
+    version: '1.1.0',
     _pools: pools,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

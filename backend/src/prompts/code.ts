@@ -27,6 +27,31 @@ alive, or does it feel like a form submission? Forms are correct. Games have scr
   coded by element/type, sparkles on crits, ring-pop expansion behind the number. Aim for
   this score-popup richness — never write \`scene.add.text(x,y,"+1")\` and call it done.
 
+## Mandatory primitives (validator-enforced)
+
+Three things every generated game MUST include:
+
+1. **Pip the fox** — \`const pip = window.Mascot.create(this, this.scale.width - 70, 130, 0.6);\`
+   inside GameScene.create. React to gameplay: \`pip.react('correct')\`, \`pip.react('wrong')\`,
+   \`pip.react('combo3')\`, \`pip.react('levelComplete')\`. Pip is the brand. Skipping him is
+   a validator failure.
+
+2. **Candy buttons everywhere.** Every UI button — Start, Continue, Retry, Next, Skip —
+   is \`window.GameFeel.candyButton(scene, x, y, w, h, 'Label', { variant, onTap })\`.
+   NEVER write \`scene.add.rectangle(...).setInteractive({ useHandCursor: true })\` for a
+   button. Variants: green primary, blue secondary, yellow special/XP, red danger,
+   outline tertiary.
+
+3. **EduCore factories** for boilerplate. Use AT LEAST 3 of:
+   - \`window.EduCore.buildPhaserConfig({ width, height })\` — spread into \`new Phaser.Game\`
+   - \`window.EduCore.buildBridgeWiring(scene, engine)\` — returns { reportLevel, reportFinish, reportScore }
+   - \`window.EduCore.makeHud(scene, { timeLimitSeconds, hearts: 3 })\` — returns { score, timer, levelHud, hearts, mascot }
+   - \`window.EduCore.buildLevelLoop(scene, spec, engine, bridge, callbacks)\` — owns the 5-level transition logic
+   - \`window.EduCore.buildGameSceneSkeleton(spec, archetype, callbacks)\` — returns a Phaser.Scene class to extend
+
+   These exist to drop your output token count. Use them. Validator \`uses_educore_factories\`
+   requires ≥3 distinct references.
+
 ## The GameFeel runtime is your weapon
 
 \`window.GameFeel\` is loaded into every game alongside EduCore. Use it relentlessly. The

@@ -6,7 +6,9 @@ import { CODE_SYSTEM_PROMPT } from '../prompts/code.ts';
 import { REFINE_SYSTEM_PROMPT } from '../prompts/refine.ts';
 import { FEEDBACK_SYSTEM_PROMPT } from '../prompts/feedback.ts';
 import { NORMALIZER_SYSTEM_PROMPT } from '../prompts/normalizer.ts';
+import { principlesFor } from '../prompts/archetype_principles.ts';
 import { GameSpec, type GameSpec as GameSpecT } from '../schemas/gameSpec.ts';
+import type { ArchetypeId } from '../schemas/archetypes.ts';
 import { FeedbackEnrichment, type FeedbackEnrichment as FeedbackEnrichmentT, type Summary } from '../schemas/summary.ts';
 import { NormalizedRequest } from '../schemas/normalizer.ts';
 import type { GenerationProvider, GenerationPhase, SpecInput, TokenUsage } from './types.ts';
@@ -139,16 +141,22 @@ export function createAnthropicProvider(): GenerationProvider {
         2,
       );
 
+      // Cost lever A — Haiku spec for 'simple' classifications, Sonnet for the rest.
+      // If Haiku fails Zod validation, fall through to Sonnet as the second attempt.
+      const fastModel = input.useFastModel === true;
       let attempt = 0;
       let lastErr: unknown = null;
       while (attempt < 2) {
         attempt += 1;
+        // Attempt 1 = chosen model. Attempt 2 = always Sonnet (so Haiku failure escalates
+        // to the higher-capacity model rather than retrying Haiku in a loop).
+        const modelForAttempt = attempt === 1 && fastModel ? fast : primary;
         const system = [{ type: 'text' as const, text: SPEC_SYSTEM_PROMPT, cache_control: cc() }];
         const prompt =
           attempt === 1
             ? userText
             : `${userText}\n\nPREVIOUS_ATTEMPT_ERRORS:\n${String(lastErr)}\nReturn a corrected JSON.`;
-        const { text, usage } = await call(primary, system, prompt, 'spec');
+        const { text, usage } = await call(modelForAttempt, system, prompt, 'spec');
         const raw = extractJsonObject(stripFences(text));
         try {
           const json = JSON.parse(raw);
@@ -159,16 +167,27 @@ export function createAnthropicProvider(): GenerationProvider {
         } catch (e) {
           lastErr = e instanceof Error ? e.message : String(e);
         }
-        logger.warn({ attempt, lastErr }, 'spec.validation_failed');
+        logger.warn({ attempt, model: modelForAttempt, lastErr }, 'spec.validation_failed');
       }
       throw new Error(`Spec generation failed after 2 attempts: ${String(lastErr)}`);
     },
 
     async generateCode(spec: GameSpecT, templateHtml: string) {
-      const system = [
-        { type: 'text' as const, text: CODE_SYSTEM_PROMPT, cache_control: cc() },
-        { type: 'text' as const, text: templateHtml, cache_control: cc() },
+      // Cost lever E: three independent cache breakpoints. The universal system prompt
+      // is shared across all archetypes (highest hit rate); the archetype-specific
+      // principles change only with archetype (medium hit rate); the template HTML
+      // changes when we redeploy. Splitting them lets each have its own cache lifetime
+      // and lifts the code-call cache-read ratio (target 61% → 85%).
+      const archetypePrinciples = principlesFor(
+        ((spec as unknown) as { archetype?: ArchetypeId }).archetype ?? null,
+      );
+      const system: Array<{ type: 'text'; text: string; cache_control: CacheControl }> = [
+        { type: 'text', text: CODE_SYSTEM_PROMPT, cache_control: cc() },
       ];
+      if (archetypePrinciples) {
+        system.push({ type: 'text', text: archetypePrinciples, cache_control: cc() });
+      }
+      system.push({ type: 'text', text: templateHtml, cache_control: cc() });
       const userText = `Generate the inner-script JS for the following spec. Return ONLY JS, no fences.\n\nSPEC:\n${JSON.stringify(spec)}`;
       const { text, usage } = await call(primary, system, userText, 'code');
       const innerScript = stripFences(text);
